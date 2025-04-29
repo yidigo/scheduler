@@ -34,7 +34,7 @@ func main() {
 	//mux.HandleFunc(tasks.TypeParquetMergeCpp, tasks.HandleMergeParquetCppTask)
 	mux.HandleFunc(tasks.TypeParquetMerge, tasks.HandleMergeParquetTask)
 	mux.HandleFunc(tasks.TypeDownloadSecond, tasks.HandleDownloadParquetTask)
-	//mux.HandleFunc(tasks.TypeDownloadReport, tasks.HandleDownloadReportTask)
+	mux.HandleFunc(tasks.TypeDownloadReport, tasks.HandleDownloadReportTask)
 
 	if err := srv.Run(mux); err != nil {
 		log.Fatalf("could not run server: %v", err)
