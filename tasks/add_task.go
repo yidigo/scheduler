@@ -18,9 +18,9 @@ func MergeParquetTaskAdd(filePath, parquetPath string) {
 
 	payload, err := json.Marshal(map[string]interface{}{
 		"UserID":     123,
-		"FilePath1":  "/home/data/a.parquet",
-		"FilePath2":  "/home/data/b.parquet",
-		"TargetPath": "/home/data/c.parquet",
+		"FilePath1":  "F1245_001_202505150000_WindFarmData.parquet",
+		"FilePath2":  "/home/data/parquet/20250515/F1245_001_20250515_WindFarmData.parquet",
+		"TargetPath": "/home/data/parquet/20250515/F1245_001_20250515_WindFarmData.parquet",
 		"DataStr":    time.Now().Format("2006-01-02-15-04-05"),
 	})
 	if err != nil {

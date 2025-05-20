@@ -41,7 +41,7 @@ type ReportData struct {
 	DeviceName               string `json:"DeviceName"`
 	FaultShutdownDuration    uint64 `json:"FaultShutdownDuration"`
 	OverhaulDuration         uint64 `json:"OverhaulDuration"`
-	MaintenancelDuration     uint64 `json:"MaintenancelDuration"`
+	MaintenanceDuration      uint64 `json:"MaintenanceDuration"`
 	GridShutdownDuration     uint64 `json:"GridShutdownDuration"`
 	LocalShutdownDuration    uint64 `json:"LocalShutdownDuration"`
 	RemoteShutdownDuration   uint64 `json:"RemoteShutdownDuration"`
@@ -327,7 +327,7 @@ func MergeData(dataList []ReportData) ReportData {
 
 		result.OverhaulDuration += data.OverhaulDuration
 
-		result.MaintenancelDuration += data.MaintenancelDuration
+		result.MaintenanceDuration += data.MaintenanceDuration
 
 		result.GridShutdownDuration += data.GridShutdownDuration
 
