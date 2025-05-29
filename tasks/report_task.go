@@ -13,14 +13,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
 )
 
 type DownloadReportPayload struct {
 	Groups        []map[string][]string `v:"required" dc:"device name"`
+	ReportType    string                `v:"required" dc:"report name" summary:"SummaryReport,TurbineAvailabilityMetrics,EfficiencyMetrics"`
 	Start         time.Time             `v:"required" dc:"trend start time"`
 	End           time.Time             `v:"required" dc:"trend end time"`
 	Columns       []string              `v:"required" dc:"columns name"`
@@ -124,11 +124,17 @@ type Statistics struct {
 }
 
 type CHDBJsonStruct struct {
-	Meta                   []Meta       `json:"meta"`
-	Data                   []ReportData `json:"data"`
-	Rows                   int          `json:"rows"`
-	RowsBeforeLimitAtLeast int          `json:"rows_before_limit_at_least"`
-	Statistics             Statistics   `json:"statistics"`
+	Meta []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"meta"`
+	Data       []map[string]interface{} `json:"data"` // Expecting data as slice of maps
+	Rows       int                      `json:"rows"`
+	Statistics struct {
+		Elapsed   float64 `json:"elapsed"`
+		RowsRead  uint64  `json:"rows_read"`
+		BytesRead uint64  `json:"bytes_read"`
+	} `json:"statistics"`
 }
 type Meta struct {
 	Name string `json:"name"`
@@ -218,7 +224,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 		}
 		timePoints = append(timePoints, currentTime.Format("2006-01-02 15:04:05"))
 	}
-	mergeResult := make([]ReportData, 0)
+	mergeResult := make([]map[string]interface{}, 0)
 	//iterate the single group like {"farm1":["001","002","003"]}
 	fields := strings.Join(p.Columns, ",")
 	for _, item := range p.Groups {
@@ -228,7 +234,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 			for key, values := range item {
 				//deviceDataList := make([]tools.ReportData, 0)
 
-				sql := fmt.Sprintf("select %s from db_report.MinutesReportData where DeviceName in %s and Time>='%s' and Time<'%s';", fields, formatList(values), timePoints[i], timePoints[i+1])
+				sql := fmt.Sprintf("select %s from db_report.%s where DeviceName in %s and Time>='%s' and Time<'%s';", fields, p.ReportType, formatList(values), timePoints[i], timePoints[i+1])
 				jsonData := DoSqlProcessJson(sql)
 				var response CHDBJsonStruct
 				err := json.Unmarshal(jsonData, &response)
@@ -238,8 +244,11 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 				//deviceDataList = append(deviceDataList, response.Data...)
 
 				group_result := MergeData(response.Data)
-				group_result.Time = timePoints[i]
-				group_result.DeviceName = key
+				date, _ := time.Parse("2006-01-02 15:04:05", timePoints[i])
+
+				group_result["Time"] = date
+				group_result["DeviceName"] = key
+
 				filename = key
 				mergeResult = append(mergeResult, group_result)
 			}
@@ -257,7 +266,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 				continue
 			}
 			fileList = append(fileList, fileDirectory+"/"+filename+".csv")
-			mergeResult = make([]ReportData, 0)
+			mergeResult = make([]map[string]interface{}, 0)
 			file.Close()
 		}
 	}
@@ -271,7 +280,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 		if err != nil {
 			fmt.Println("Error writing to CSV:", err)
 		}
-		mergeResult = make([]ReportData, 0)
+		mergeResult = make([]map[string]interface{}, 0)
 		fileList = append(fileList, fileDirectory+"/"+"all.csv")
 		file.Close()
 
@@ -309,234 +318,245 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 	return nil
 }
 
-func MergeData(dataList []ReportData) ReportData {
-	result := ReportData{}
-	result.GriActivePowerTotalMin = 999999999999999999999999999
-	result.GriReactivePowerTotalMin = 9999999999999999999999999
-	result.CnvGenPower30sMin = 999999999999999999999999999
-	result.CnvGenPower600sMin = 999999999999999999999999999
-	result.PreTotalGenerationFirst = 999999999999999999999999999
-	result.PreTotalEleConsumptionFirst = 999999999999999999999999999
-	for _, data := range dataList {
-
-		// Uint64 and Uint32
-		result.AllCount += data.AllCount
-
-		// Duration fields
-		result.FaultShutdownDuration += data.FaultShutdownDuration
-
-		result.OverhaulDuration += data.OverhaulDuration
-
-		result.MaintenanceDuration += data.MaintenanceDuration
-
-		result.GridShutdownDuration += data.GridShutdownDuration
-
-		result.LocalShutdownDuration += data.LocalShutdownDuration
-
-		result.RemoteShutdownDuration += data.RemoteShutdownDuration
-
-		result.WeatherShutdownDuration += data.WeatherShutdownDuration
-
-		result.LimitPowerDuration += data.LimitPowerDuration
-
-		result.LimitShutdownDuration += data.LimitShutdownDuration
-
-		result.StandbyDuration += data.StandbyDuration
-
-		result.NormalGenerationDuration += data.NormalGenerationDuration
-
-		result.InterruptionDuration += data.InterruptionDuration
-
-		// Times fields
-
-		result.FaultShutdownTimes += data.FaultShutdownTimes
-
-		result.OverhaulTimes += data.OverhaulTimes
-
-		result.MaintenanceTimes += data.MaintenanceTimes
-
-		result.GridShutdownTimes += data.GridShutdownTimes
-
-		result.LocalShutdownTimes += data.LocalShutdownTimes
-
-		result.RemoteShutdownTimes += data.RemoteShutdownTimes
-
-		result.WeatherShutdownTimes += data.WeatherShutdownTimes
-
-		result.LimitPowerTimes += data.LimitPowerTimes
-
-		result.LimitShutdownTimes += data.LimitShutdownTimes
-
-		result.StandbyTimes += data.StandbyTimes
-
-		result.NormalGenerationTimes += data.NormalGenerationTimes
-
-		result.InterruptionTimes += data.InterruptionTimes
-
-		// Float64 fields
-
-		result.TheoreticalGeneration += data.TheoreticalGeneration
-
-		result.GriActivePowerTotalAvg = result.GriActivePowerTotalAvg + data.GriActivePowerTotalAvg*float64(data.AllCount)
-
-		if data.GriActivePowerTotalMax > result.GriActivePowerTotalMax {
-			result.GriActivePowerTotalMax = data.GriActivePowerTotalMax
-		}
-
-		if data.GriActivePowerTotalMin < result.GriActivePowerTotalMin {
-			result.GriActivePowerTotalMin = data.GriActivePowerTotalMin
-		}
-
-		result.GriReactivePowerTotalAvg = result.GriReactivePowerTotalAvg + data.GriReactivePowerTotalAvg*float64(data.AllCount)
-
-		if data.GriReactivePowerTotalMax > result.GriReactivePowerTotalMax {
-			result.GriReactivePowerTotalMax = data.GriReactivePowerTotalMax
-		}
-
-		if data.GriReactivePowerTotalMin < result.GriReactivePowerTotalMin {
-			result.GriReactivePowerTotalMin = data.GriReactivePowerTotalMin
-		}
-
-		result.CnvGenPower30sAvg = result.CnvGenPower30sAvg + data.CnvGenPower30sAvg*float64(data.AllCount)
-
-		if data.CnvGenPower30sMax > result.CnvGenPower30sMax {
-			result.CnvGenPower30sMax = data.CnvGenPower30sMax
-		}
-
-		if data.CnvGenPower30sMin < result.CnvGenPower30sMin {
-			result.CnvGenPower30sMin = data.CnvGenPower30sMin
-		}
-
-		result.CnvGenPower600sAvg = result.CnvGenPower600sAvg + data.CnvGenPower600sAvg*float64(data.AllCount)
-
-		if data.CnvGenPower600sMax > result.CnvGenPower600sMax {
-			result.CnvGenPower600sMax = data.CnvGenPower600sMax
-		}
-
-		if data.CnvGenPower600sMin < result.CnvGenPower600sMin {
-			result.CnvGenPower600sMin = data.CnvGenPower600sMin
-		}
-
-		result.MTBFDuration = result.MTBFDuration + data.MTBFDuration*float64(data.AllCount)
-
-		result.MTTRDuration = result.MTTRDuration + data.MTTRDuration*float64(data.AllCount)
-
-		result.Availability = result.Availability + data.Availability*float64(data.AllCount)
-
-		if data.PreTotalGenerationFirst < result.PreTotalGenerationFirst {
-			result.PreTotalGenerationFirst = data.PreTotalGenerationFirst
-		}
-
-		if data.GriActiveEnergyDelLast > result.GriActiveEnergyDelLast {
-			result.GriActiveEnergyDelLast = data.GriActiveEnergyDelLast
-		}
-
-		result.GriActiveEnergyDelTotal = result.GriActiveEnergyDelTotal + data.GriActiveEnergyDelTotal*float64(data.AllCount)
-
-		if data.PreTotalEleConsumptionFirst < result.PreTotalEleConsumptionFirst {
-			result.PreTotalEleConsumptionFirst = data.PreTotalEleConsumptionFirst
-		}
-
-		if data.GriActiveEnergyRcvLast > result.GriActiveEnergyRcvLast {
-			result.GriActiveEnergyRcvLast = data.GriActiveEnergyRcvLast
-		}
-
-		result.GriActiveEnergyRcvSection = result.GriActiveEnergyRcvSection + data.GriActiveEnergyRcvSection*float64(data.AllCount)
-
-		result.RatedPower = result.RatedPower + data.RatedPower*float64(data.AllCount)
-
+func MergeData(dataList []map[string]interface{}) map[string]interface{} {
+	if len(dataList) == 0 {
+		return make(map[string]interface{}) // Return empty map for empty input
 	}
 
-	result.GriActivePowerTotalAvg = result.GriActivePowerTotalAvg / float64(result.AllCount)
+	result := make(map[string]interface{})
+	keyValues := make(map[string][]interface{}) // Stores all values for a given key
+	allUniqueKeys := make(map[string]struct{})  // To get a unique set of all keys across maps
 
-	result.GriReactivePowerTotalAvg = result.GriReactivePowerTotalAvg / float64(result.AllCount)
+	// 1. Collect all values for each key from all maps
+	for _, dataMap := range dataList {
+		for key, value := range dataMap {
+			keyValues[key] = append(keyValues[key], value)
+			allUniqueKeys[key] = struct{}{}
+		}
+	}
 
-	result.CnvGenPower30sAvg = result.CnvGenPower30sAvg / float64(result.AllCount)
+	// Sort keys for deterministic output order (optional, but good for testing)
+	sortedKeys := make([]string, 0, len(allUniqueKeys))
+	for k := range allUniqueKeys {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
 
-	result.CnvGenPower600sAvg = result.CnvGenPower600sAvg / float64(result.AllCount)
+	// 2. Process each key
+	for _, key := range sortedKeys {
+		values := keyValues[key]
+		if len(values) == 0 { // Should ideally not happen if allUniqueKeys was populated correctly
+			continue
+		}
 
-	result.MTBFDuration = result.MTBFDuration / float64(result.AllCount)
+		lowerKey := strings.ToLower(key)
 
-	result.MTTRDuration = result.MTTRDuration / float64(result.AllCount)
+		// Rule 2: Special handling for "DeviceName"
+		if key == "DeviceName" {
+			var names []string
+			for _, v := range values {
+				if s, ok := v.(string); ok {
+					// Avoid adding duplicate names if they are consecutive or if you want unique names
+					// For this example, we just append all found names.
+					names = append(names, s)
+				}
+			}
+			result[key] = strings.Join(names, ", ")
+			continue
+		}
 
-	result.Availability = result.Availability / float64(result.AllCount)
+		// Rule 2: Special handling for "Time" - take the latest time
+		if key == "Time" {
+			var latestTime time.Time
+			var timeFound bool
+			for _, v := range values {
+				if t, ok := v.(time.Time); ok {
+					if !timeFound || t.After(latestTime) {
+						latestTime = t
+						timeFound = true
+					}
+				}
+			}
+			if timeFound {
+				result[key] = latestTime
+			} else if len(values) > 0 { // Fallback if no time.Time found but values exist
+				result[key] = values[0]
+			}
+			continue
+		}
 
-	result.GriActiveEnergyDelTotal = result.GriActiveEnergyDelTotal / float64(result.AllCount)
+		// Attempt to get numeric values for aggregation
+		numericValues := getNumericValues(values)
 
-	result.GriActiveEnergyRcvSection = result.GriActiveEnergyRcvSection / float64(result.AllCount)
+		if len(numericValues) == 0 {
+			// Rule 4: If no numeric values could be extracted for this key (and it's not Time/DeviceName),
+			// take the first available raw value as a fallback.
+			if len(values) > 0 {
+				result[key] = values[0]
+			}
+			continue
+		}
 
-	result.RatedPower = result.RatedPower / float64(result.AllCount)
+		// At this point, numericValues has at least one element.
+		// Rule 3: Apply aggregation rules based on key name
+		processed := false
+		if strings.Contains(lowerKey, "max") {
+			maxVal := numericValues[0]
+			for i := 1; i < len(numericValues); i++ {
+				if numericValues[i] > maxVal {
+					maxVal = numericValues[i]
+				}
+			}
+			result[key] = maxVal
+			processed = true
+		} else if strings.Contains(lowerKey, "min") {
+			minVal := numericValues[0]
+			for i := 1; i < len(numericValues); i++ {
+				if numericValues[i] < minVal {
+					minVal = numericValues[i]
+				}
+			}
+			result[key] = minVal
+			processed = true
+		} else if strings.Contains(lowerKey, "avg") { // Explicit "avg" in key
+			sum := 0.0
+			for _, num := range numericValues {
+				sum += num
+			}
+			result[key] = sum / float64(len(numericValues))
+			processed = true
+		} else if strings.Contains(lowerKey, "sum") || strings.Contains(lowerKey, "total") { // "sum" or "total" in key
+			sum := 0.0
+			for _, num := range numericValues {
+				sum += num
+			}
+			result[key] = sum
+			processed = true
+		}
+
+		if !processed {
+			// Rule 3 (Default): Default aggregation for numeric fields is average
+			sum := 0.0
+			for _, num := range numericValues {
+				sum += num
+			}
+			result[key] = sum / float64(len(numericValues))
+		}
+	}
 
 	return result
 }
 
-func ReportDataToCSV(data []ReportData, columns map[string]string, writer io.Writer) error {
+func getNumericValues(values []interface{}) []float64 {
+	var nums []float64
+	for _, v := range values {
+		switch val := v.(type) {
+		case int:
+			nums = append(nums, float64(val))
+		case int8:
+			nums = append(nums, float64(val))
+		case int16:
+			nums = append(nums, float64(val))
+		case int32:
+			nums = append(nums, float64(val))
+		case int64:
+			nums = append(nums, float64(val))
+		case uint:
+			nums = append(nums, float64(val))
+		case uint8:
+			nums = append(nums, float64(val))
+		case uint16:
+			nums = append(nums, float64(val))
+		case uint32:
+			nums = append(nums, float64(val))
+		case uint64:
+			nums = append(nums, float64(val))
+		case float32:
+			nums = append(nums, float64(val))
+		case float64:
+			nums = append(nums, val)
+			// Add other numeric types if necessary, or log/error for unexpected types
+		}
+	}
+	return nums
+}
+
+func ReportDataToCSV(data []map[string]interface{}, columns map[string]string, writer io.Writer) error {
 	csvWriter := csv.NewWriter(writer)
-	oriColumn := make([]string, 0)
-	headerRow := make([]string, 0)
-	for key, value := range columns {
-		oriColumn = append(oriColumn, key)
-		headerRow = append(headerRow, value)
 
+	// Define the specific data keys for prioritized columns
+	const timeDataKey = "Time"
+	const devicesDataKey = "DeviceName"
+
+	var orderedDataKeys []string
+	var csvHeaders []string
+	processedKeys := make(map[string]bool) // To keep track of keys already added
+
+	// 1. Handle "time" column (first priority)
+	if headerName, ok := columns[timeDataKey]; ok {
+		orderedDataKeys = append(orderedDataKeys, timeDataKey)
+		csvHeaders = append(csvHeaders, headerName)
+		processedKeys[timeDataKey] = true
 	}
 
-	if err := csvWriter.Write(headerRow); err != nil {
-		return fmt.Errorf("error writing header row to csv: %w", err)
+	// 2. Handle "devices" column (second priority)
+	// Ensure it's not the same as timeDataKey and hasn't been processed
+	if headerName, ok := columns[devicesDataKey]; ok {
+		if !processedKeys[devicesDataKey] {
+			orderedDataKeys = append(orderedDataKeys, devicesDataKey)
+			csvHeaders = append(csvHeaders, headerName)
+			processedKeys[devicesDataKey] = true
+		}
 	}
 
-	// Reflect the ReportData struct type to access fields by name
-	reportDataType := reflect.TypeOf(ReportData{})
+	// 3. Handle remaining columns
+	// Collect and sort them for consistent order
+	var remainingDataKeys []string
+	for dataKey := range columns {
+		if !processedKeys[dataKey] {
+			remainingDataKeys = append(remainingDataKeys, dataKey)
+		}
+	}
+	sort.Strings(remainingDataKeys) // Sort by data key for predictable order
 
-	// Iterate through each ReportData record
-	for _, record := range data {
-		recordValue := reflect.ValueOf(record)
-		row := make([]string, 0, len(oriColumn))
+	for _, dataKey := range remainingDataKeys {
+		orderedDataKeys = append(orderedDataKeys, dataKey)
+		csvHeaders = append(csvHeaders, columns[dataKey])
+	}
 
-		// Iterate through the desired columns
-		for _, col := range oriColumn {
-			// Find the field in the struct based on the JSON tag
-			fieldValue := reflect.Value{}
-			for i := 0; i < reportDataType.NumField(); i++ {
-				field := reportDataType.Field(i)
-				jsonTag := field.Tag.Get("json")
-				if jsonTag == col {
-					fieldValue = recordValue.Field(i)
-					break
+	// Write header row if there are any headers
+	if len(csvHeaders) > 0 {
+		if err := csvWriter.Write(csvHeaders); err != nil {
+			return fmt.Errorf("error writing CSV header: %w", err)
+		}
+	}
+
+	// Write data rows
+	for _, rowMap := range data {
+		record := make([]string, len(orderedDataKeys))
+		for i, dataKey := range orderedDataKeys {
+			value, found := rowMap[dataKey]
+			if !found {
+				record[i] = "" // Use empty string for missing values
+			} else {
+				// Special handling for time.Time for better formatting
+				if t, ok := value.(time.Time); ok {
+					record[i] = t.Format(time.RFC3339) // Example: "2006-01-02T15:04:05Z07:00"
+				} else {
+					record[i] = fmt.Sprintf("%v", value)
 				}
 			}
-
-			// If the field is not found (JSON tag doesn't match the column), add an empty string
-			if !fieldValue.IsValid() {
-				row = append(row, "")
-				continue
-			}
-
-			// Convert the field value to a string based on its type
-			var stringValue string
-			switch fieldValue.Kind() {
-			case reflect.String:
-				stringValue = fieldValue.String()
-			case reflect.Uint64:
-				stringValue = strconv.FormatUint(fieldValue.Uint(), 10)
-			case reflect.Int64:
-				stringValue = strconv.FormatInt(fieldValue.Int(), 10)
-			case reflect.Float64:
-				stringValue = strconv.FormatFloat(fieldValue.Float(), 'f', -1, 64) // Use 'f' format for floating-point numbers
-			default:
-				stringValue = fmt.Sprintf("%v", fieldValue.Interface()) // Fallback to general formatting
-			}
-			row = append(row, stringValue)
 		}
-
-		// Write the row to the CSV file
-		if err := csvWriter.Write(row); err != nil {
-			return fmt.Errorf("error writing row to csv: %w", err)
+		if err := csvWriter.Write(record); err != nil {
+			// It's often better to log this error and continue, or collect errors
+			// For simplicity here, we return on the first error.
+			return fmt.Errorf("error writing CSV record: %w", err)
 		}
 	}
 
 	csvWriter.Flush()
 	if err := csvWriter.Error(); err != nil {
-		return fmt.Errorf("error flushing csv writer: %w", err)
+		return fmt.Errorf("error flushing CSV writer: %w", err)
 	}
 
 	return nil

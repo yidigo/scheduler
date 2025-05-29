@@ -132,14 +132,15 @@ func TestDownloadReportTaskAdd(t *testing.T) {
 	req := DownloadReportPayload{
 		Groups: []map[string][]string{
 			{
-				"F1240": {"F1240_001", "F1240_002"},
+				"F1245_001": {"F1245_001"},
 			}, {
-				"F1250": {"F1240_002", "F1240_003"},
+				"F1245_002": {"F1245_002"},
 			},
 		},
-		Start:   time.Date(2025, 4, 21, 0, 0, 0, 0, time.UTC),
-		End:     time.Date(2025, 4, 21, 1, 0, 0, 0, time.UTC),
-		Columns: []string{"Time", "DeviceName", "GriActiveEnergyDelTotal", "GriActiveEnergyRcvSection", "GriActivePowerTotalMax", "GriReactivePowerTotalMin", "TheoreticalGeneration", "PreTotalEleConsumptionFirst"},
+		ReportType: "SummaryReport",
+		Start:      time.Date(2025, 5, 22, 0, 0, 0, 0, time.UTC),
+		End:        time.Date(2025, 5, 22, 1, 0, 0, 0, time.UTC),
+		Columns:    []string{"Time", "DeviceName", "GriActiveEnergyDelTotal", "GriActiveEnergyRcvSection", "GriActivePowerTotalMax", "GriReactivePowerTotalMin", "TheoreticalGeneration", "PreTotalEleConsumptionFirst"},
 		TranColumns: map[string]string{
 			"Time":                        "Time",
 			"DeviceName":                  "DeviceName",
@@ -154,7 +155,7 @@ func TestDownloadReportTaskAdd(t *testing.T) {
 			"10min",
 			false,
 		},
-		FilePath:      "/tmp/rr1.zip",
+		FilePath:      "/tmp/tt1.zip",
 		TaskStartTime: time.Now(),
 		Language:      "en",
 	}
@@ -167,7 +168,7 @@ func TestDownloadReportTaskAdd(t *testing.T) {
 		name string
 		args args
 	}{
-		{name: "m1", args: args{filePath: "/home/dbservice/file_F1008_0_testdata-2024-12-31-11.parquet", parquetPath: "/tmp/"}},
+		{name: "m1", args: args{filePath: "", parquetPath: "/tmp/"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

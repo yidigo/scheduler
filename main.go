@@ -17,14 +17,16 @@ func main() {
 		},
 		asynq.Config{
 			// 每个进程并发执行的worker数量
-			Concurrency: 30,
+			Concurrency: 10,
 			// Optionally specify multiple queues with different priority.
 			Queues: map[string]int{
-				"critical": 50,
-				"merge":    10,
-				"default":  10,
-				"second":   5,
-				"report":   5,
+				"critical":                   10,
+				"merge":                      30,
+				"default":                    10,
+				"second":                     5,
+				"SummaryReport":              5,
+				"TurbineAvailabilityMetrics": 5,
+				"EfficiencyMetrics":          5,
 			},
 			// See the godoc for other configuration options
 		},

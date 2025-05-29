@@ -75,7 +75,7 @@ func DownloadReportTaskAdd(dp DownloadReportPayload) {
 	}
 
 	// 任务入队
-	info, err := client.Enqueue(asynq.NewTask("report:download", payload), asynq.Retention(24*time.Hour), asynq.Queue("report"), asynq.MaxRetry(0))
+	info, err := client.Enqueue(asynq.NewTask("report:download", payload), asynq.Retention(24*time.Hour), asynq.Queue(dp.ReportType), asynq.MaxRetry(0))
 
 	//info, err := client.Enqueue(task, time.Now())
 	// 延迟执行
