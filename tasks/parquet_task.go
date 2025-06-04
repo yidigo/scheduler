@@ -12,79 +12,18 @@ import (
 	"github.com/apache/arrow/go/v18/parquet/file"
 	"github.com/apache/arrow/go/v18/parquet/pqarrow"
 	"github.com/hibiken/asynq"
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
+	"scheduler/logger"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// Global loggers
-var (
-	infoLogger  *log.Logger
-	errorLogger *log.Logger
-)
-
-const (
-	logDir          = "logs" // Directory to store log files
-	logFilePattern  = "-%Y-%m-%d.log"
-	logRotationTime = 24 * time.Hour
-	logMaxAge       = 7 * 24 * time.Hour // Keep logs for 7 days
-	logSymlinkBase  = ".log"
-	infoLogPrefix   = "INFO: "
-	errorLogPrefix  = "ERROR: "
-	logFlags        = log.Ldate | log.Ltime | log.Lshortfile
-)
-
-func init() {
-	// Ensure log directory exists
-	if _, err := os.Stat(logDir); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(logDir, 0755); mkErr != nil {
-			log.Fatalf("Failed to create log directory %s: %v", logDir, mkErr)
-		}
-	}
-
-	// --- Setup Info Logger ---
-	infoLogPath := filepath.Join(logDir, "info") // Base name for info log
-	infoWriter, err := rotatelogs.New(
-		infoLogPath+logFilePattern,
-		rotatelogs.WithLinkName(infoLogPath+logSymlinkBase), // Symlink to current log file
-		rotatelogs.WithRotationTime(logRotationTime),
-		rotatelogs.WithMaxAge(logMaxAge),
-	)
-	if err != nil {
-		log.Fatalf("Failed to initialize info log rotator: %v", err)
-	}
-	infoLogger = log.New(infoWriter, infoLogPrefix, logFlags)
-	infoLogger.Println("Info logger initialized")
-
-	// --- Setup Error Logger ---
-	errorLogPath := filepath.Join(logDir, "error") // Base name for error log
-	errorWriter, err := rotatelogs.New(
-		errorLogPath+logFilePattern,
-		rotatelogs.WithLinkName(errorLogPath+logSymlinkBase), // Symlink to current log file
-		rotatelogs.WithRotationTime(logRotationTime),
-		rotatelogs.WithMaxAge(logMaxAge),
-	)
-	if err != nil {
-		log.Fatalf("Failed to initialize error log rotator: %v", err)
-	}
-	errorLogger = log.New(errorWriter, errorLogPrefix, logFlags)
-	errorLogger.Println("Error logger initialized")
-
-	// Redirect standard log's output to our error logger by default,
-	// or you can choose infoLogger if you prefer.
-	// This captures `log.Fatalf` from libraries if they use the standard logger.
-	// log.SetOutput(errorWriter) // Or infoWriter
-	// log.SetFlags(logFlags)
-	// Commenting this out because asynq's internal logger might get redirected.
-	// It's better to explicitly use infoLogger and errorLogger.
-}
 
 // var CHDBURL = "http://10.162.4.16:8123/"
 //var CHDBURL = "http://10.162.74.33:8123/"
@@ -167,11 +106,33 @@ type DownloadParquetPayload struct {
 //	return nil
 //}
 
+var ParquetLogger *logger.Logger
+
+func init() {
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   "./app_rotated.log",
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28,   //days
+		Compress:   true, // disabled by default
+	}
+	defer lumberjackLogger.Close()
+
+	ParquetLogger = logger.New(
+		logger.WithOutput(lumberjackLogger),
+		logger.WithLevel(logger.LevelInfo),
+	)
+
+	ParquetLogger.Info("scheduler service restart")
+
+}
+
 func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	var p MergeParquetPayload
 	//fmt.Println(string(t.Payload()))
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		errorLogger.Printf("json.Unmarshal failed: %s: %s", err, asynq.SkipRetry)
+
+		ParquetLogger.Error("json.Unmarshal failed:", err)
 		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
 	}
 
@@ -180,8 +141,7 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	if FileExists(p.FilePath1) {
 		sc1, err = GetParquetSchema(p.FilePath1)
 		if err != nil {
-
-			errorLogger.Printf("Error get file schema : %s\n,%v\n", p.FilePath1, err)
+			ParquetLogger.Errorf("Error get file schema : %s\n,%v\n", err)
 			return err
 		}
 	}
@@ -189,14 +149,14 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	if FileExists(p.FilePath2) {
 		sc2, err = GetParquetSchema(p.FilePath2)
 		if err != nil {
-			errorLogger.Printf("Error get file schema : %s\n,%v\n", p.FilePath2, err)
+			ParquetLogger.Errorf("Error get file schema : %s\n,%v\n", p.FilePath2, err)
 			return err
 		}
 	}
 
 	allSchema, err := MergeSchema(sc1, sc2)
 	if err != nil {
-		errorLogger.Printf("Error merge file schema : %s   %s\n,%v\n", p.FilePath1, p.FilePath2, err)
+		ParquetLogger.Errorf("Error merge file schema : %s   %s\n,%v\n", p.FilePath1, p.FilePath2, err)
 		return err
 	}
 	tableName := "temporary_table_" + strconv.Itoa(rand.Intn(1000))
@@ -216,12 +176,12 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	if len(result) == 0 {
 		err := os.Remove(p.FilePath2)
 		if err != nil {
-			errorLogger.Println("Error deleting file:", err)
+			ParquetLogger.Errorf("Error deleting file:", err)
 		}
 		return nil
 	} else {
-		errorLogger.Printf("Error when merge parquet file :%s", result)
-		errorLogger.Println(string(result))
+		ParquetLogger.Errorf("Error when merge parquet file :%s", result)
+		ParquetLogger.Errorf(string(result))
 		return errors.New(string(result))
 	}
 }
@@ -231,7 +191,7 @@ func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
 	var p DownloadParquetPayload
 	//fmt.Println(t.Payload())
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		errorLogger.Printf("json.Unmarshal failed: %s: %s", err, asynq.SkipRetry)
+		ParquetLogger.Errorf("json.Unmarshal failed: %s: %s", err, asynq.SkipRetry)
 		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
 	}
 
@@ -239,7 +199,7 @@ func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
 	if _, err := os.Stat(fileDirectory); os.IsNotExist(err) {
 		err := os.MkdirAll(fileDirectory, os.ModeDir|0755) // Creates parent directories if needed
 		if err != nil {
-			errorLogger.Println("Error creating directory:", err)
+			ParquetLogger.Errorf("Error creating directory:", err)
 			return err
 		}
 	}
@@ -266,21 +226,21 @@ func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
 		result := DoSqlProcess(sql)
 		//fmt.Println(sql)
 		fileList = append(fileList, fileDirectory+"/turbines.csv")
-		infoLogger.Printf("file8path:%s   result:%s  \n", p.FilePath, result)
+		ParquetLogger.Infof("file8path:%s   result:%s  \n", p.FilePath, result)
 	} else {
 		for _, d := range p.Devices {
 			sql := fmt.Sprintf(`SELECT toStartOfInterval(toDateTime(time), INTERVAL %s) AS interval, %s, turbine FROM file('%s*/*.parquet', Parquet) WHERE time BETWEEN '%s' AND '%s' AND turbine IN (%s) GROUP BY interval,turbine ORDER BY interval,turbine INTO OUTFILE '%s' TRUNCATE FORMAT CSVWithNames`, p.Operation.Resample, columns, SECONDPARQUETPATH, p.Start.Format("2006-01-02 15:04:05"), p.End.Format("2006-01-02 15:04:05"), "'"+d+"'", fileDirectory+"/"+d+".csv")
 			result := DoSqlProcess(sql)
 			//fmt.Println(sql)
 			fileList = append(fileList, fileDirectory+"/"+d+".csv")
-			infoLogger.Printf("filepath:%s   result:%s  \n", p.FilePath, result)
+			ParquetLogger.Infof("filepath:%s   result:%s  \n", p.FilePath, result)
 		}
 
 	}
 
 	zipFile, err := os.Create(p.FilePath)
 	if err != nil {
-		errorLogger.Println("Error creating zip file:", err)
+		ParquetLogger.Errorf("Error creating zip file:", err)
 		return err
 	}
 
@@ -291,20 +251,20 @@ func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
 	for _, filename := range fileList {
 		err := addFileToZip(zipWriter, filename)
 		if err != nil {
-			errorLogger.Println("Error adding file to zip:", err)
+			ParquetLogger.Errorf("Error adding file to zip:", err)
 			return err
 		}
 	}
 
-	infoLogger.Println("Successfully created zip archive:", p.FilePath)
+	ParquetLogger.Infof("Successfully created zip archive:", p.FilePath)
 	zipWriter.Close()
 	zipFile.Close()
 	for _, filepath := range fileList {
 		err := os.Remove(filepath) // Use os.Remove to delete a file
 		if err != nil {
-			errorLogger.Printf("Error removing file %s: %v\n", filepath, err)
+			ParquetLogger.Errorf("Error removing file %s: %v\n", filepath, err)
 		} else {
-			infoLogger.Printf("Successfully removed file: %s\n", filepath)
+			ParquetLogger.Infof("Successfully removed file: %s\n", filepath)
 		}
 	}
 	return nil
@@ -316,7 +276,7 @@ func GetMetaDataSql(data string) []byte {
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
 	if err != nil {
-		errorLogger.Println("Error creating request:", err)
+		ParquetLogger.Errorf("Error creating request:", err)
 		return nil
 	}
 
@@ -332,14 +292,14 @@ func GetMetaDataSql(data string) []byte {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		errorLogger.Println("Error making request:", err)
+		ParquetLogger.Errorf("Error making request:", err)
 		return nil
 	}
 	defer resp.Body.Close()
 	content, _ := io.ReadAll(resp.Body)
 
 	//fmt.Println(content)
-	infoLogger.Println(time.Now().Sub(t1))
+	ParquetLogger.Infof("time cost %s", time.Now().Sub(t1))
 
 	return content
 
@@ -349,7 +309,7 @@ func DoSqlProcess(data string) []byte {
 	t1 := time.Now()
 	req, err := http.NewRequest("POST", CHDBURL+"?add_http_cors_header=1&default_format=Values&max_result_rows=1000&max_result_bytes=10000000&result_overflow_mode=break", bytes.NewBuffer([]byte(data)))
 	if err != nil {
-		errorLogger.Println("Error creating request:", err)
+		ParquetLogger.Errorf("Error creating request:", err)
 		return nil
 	}
 	req.Header.Set("Accept", "*/*")
@@ -359,7 +319,7 @@ func DoSqlProcess(data string) []byte {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		errorLogger.Println("Error making request:", err)
+		ParquetLogger.Errorf("Error making request:", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -517,7 +477,7 @@ func MergeSchema(schema1, schema2 *arrow.Schema) (*arrow.Schema, error) {
 				// Check for type compatibility if the field exists in both schemas.
 				existingField := fieldMap[field.Name]
 				if existingField.Type.ID() != field.Type.ID() {
-					errorLogger.Printf("Warning: Conflicting types for field '%s'. Using type from first schema: %s, ignoring type from second schema: %s",
+					ParquetLogger.Errorf("Warning: Conflicting types for field '%s'. Using type from first schema: %s, ignoring type from second schema: %s",
 						field.Name, existingField.Type.String(), field.Type.String())
 					// Ideally, resolve the type conflict by promoting to a common type, casting, or other strategies.
 					// For simplicity, we use the type from the first schema as-is.
@@ -533,7 +493,7 @@ func MergeSchema(schema1, schema2 *arrow.Schema) (*arrow.Schema, error) {
 func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 	f, err := os.Open(parquetPath)
 	if err != nil {
-		errorLogger.Println("failed to open Parquet file: %w", err)
+		ParquetLogger.Errorf("failed to open Parquet file: %w", err)
 		return nil, err
 	}
 	defer f.Close()
@@ -541,7 +501,7 @@ func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 	// Create a new ParquetReader
 	reader, err := file.NewParquetReader(f)
 	if err != nil {
-		errorLogger.Println("Error creating Parquet reader: %w", err)
+		ParquetLogger.Errorf("Error creating Parquet reader: %w", err)
 		return nil, err
 	}
 	defer reader.Close()
@@ -550,7 +510,7 @@ func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 	// Create a ParquetFileReader to Arrow converter
 	arrowReader, err := pqarrow.NewFileReader(reader, pqarrow.ArrowReadProperties{}, mem)
 	if err != nil {
-		errorLogger.Printf("Error creating Arrow reader: %v\n", err)
+		ParquetLogger.Errorf("Error creating Arrow reader: %v\n", err)
 		return nil, err
 	}
 	// Get the Arrow schema
@@ -565,7 +525,7 @@ func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 //	var response ResponseData
 //	err := json.Unmarshal(content1, &response)
 //	if err != nil {
-//		errorLogger.Println("Error unmarshalling JSON:", err)
+//		ParquetLogger.Errorf("Error unmarshalling JSON:", err)
 //		return response, err
 //	}
 //
@@ -581,7 +541,7 @@ func GetParquetSchemaCHDBDict(parquetPath string) (ResponseData, error) {
 	var response ResponseData
 	err := json.Unmarshal(content1, &response)
 	if err != nil {
-		errorLogger.Println("Error unmarshalling JSON:", err)
+		ParquetLogger.Errorf("Error unmarshalling JSON:", err)
 		return response, err
 	}
 
@@ -599,7 +559,7 @@ func FileExists(filename string) bool {
 func ContinuousQueries(parquet1, parquetOut string, interval string) error {
 	sc1, err := GetParquetSchemaCHDBDict(parquet1)
 	if err != nil {
-		errorLogger.Printf("Error get file schema : %s\n,%v\n", parquet1, err)
+		ParquetLogger.Errorf("Error get file schema : %s\n,%v\n", parquet1, err)
 		return err
 	}
 

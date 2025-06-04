@@ -6,6 +6,7 @@ require (
 	github.com/apache/arrow/go/v18 v18.0.0-20241007013041-ab95a4d25142
 	github.com/hibiken/asynq v0.25.1
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (

@@ -2,11 +2,30 @@ package main
 
 import (
 	"github.com/hibiken/asynq"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"log"
+	"scheduler/logger"
 	"scheduler/tasks"
 )
 
 func main() {
+
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   "./app_rotated.log",
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28,   //days
+		Compress:   true, // disabled by default
+	}
+	defer lumberjackLogger.Close()
+
+	RotatedFileLogger := logger.New(
+		logger.WithOutput(lumberjackLogger),
+		logger.WithLevel(logger.LevelInfo),
+	)
+
+	RotatedFileLogger.Info("scheduler service restart")
+
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{
 			//Addr: "127.0.0.1:6379",

@@ -8,15 +8,38 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hibiken/asynq"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"scheduler/logger"
 	"sort"
 	"strings"
 	"time"
 )
+
+var ReportLogger *logger.Logger
+
+func init() {
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   "./app_rotated.log",
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28,   //days
+		Compress:   true, // disabled by default
+	}
+	defer lumberjackLogger.Close()
+
+	ReportLogger = logger.New(
+		logger.WithOutput(lumberjackLogger),
+		logger.WithLevel(logger.LevelInfo),
+	)
+
+	ReportLogger.Info("scheduler service restart")
+
+}
 
 type DownloadReportPayload struct {
 	Groups        []map[string][]string `v:"required" dc:"device name"`
@@ -147,7 +170,7 @@ func DoSqlProcessJson(data string) []byte {
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
 	if err != nil {
-		fmt.Println("Error creating request:", err)
+		ReportLogger.Errorf("Error creating request:", err)
 		return nil
 	}
 	req.Header.Set("Accept", "*/*")
@@ -157,12 +180,12 @@ func DoSqlProcessJson(data string) []byte {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Error making request:", err)
+		ReportLogger.Errorf("Error making request:", err)
 		return nil
 	}
 	defer resp.Body.Close()
 	content, _ := io.ReadAll(resp.Body)
-	fmt.Println(time.Now().Sub(t1))
+	ReportLogger.Infof("time cost:%f", time.Now().Sub(t1))
 
 	return content
 
@@ -175,7 +198,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 	if _, err := os.Stat(fileDirectory); os.IsNotExist(err) {
 		err := os.MkdirAll(fileDirectory, os.ModeDir|0755) // Creates parent directories if needed
 		if err != nil {
-			fmt.Println("Error creating directory:", err)
+			ReportLogger.Errorf("Error creating directory:", err)
 			return err
 		}
 	}
@@ -273,12 +296,12 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 		}
 		file, err := os.Create(fileDirectory + "/" + "all.csv")
 		if err != nil {
-			fmt.Println("Error creating CSV file:", err)
+			ReportLogger.Errorf("Error creating CSV file:", err)
 		}
 
 		err = ReportDataToCSV(mergeResult, p.TranColumns, file)
 		if err != nil {
-			fmt.Println("Error writing to CSV:", err)
+			ReportLogger.Errorf("Error writing to CSV:", err)
 		}
 		mergeResult = make([]map[string]interface{}, 0)
 		fileList = append(fileList, fileDirectory+"/"+"all.csv")
@@ -317,13 +340,13 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 			if p.Operation.Merge == false {
 				file, err := os.Create(fileDirectory + "/" + filename + ".csv")
 				if err != nil {
-					fmt.Println("Error creating CSV file:", err)
+					ReportLogger.Errorf("Error creating CSV file:", err)
 					continue
 				}
 
 				err = ReportDataToCSV(mergeResult, p.TranColumns, file)
 				if err != nil {
-					fmt.Println("Error writing to CSV:", err)
+					ReportLogger.Errorf("Error writing to CSV:", err)
 					continue
 				}
 				fileList = append(fileList, fileDirectory+"/"+filename+".csv")
@@ -334,12 +357,12 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 		if p.Operation.Merge == true {
 			file, err := os.Create(fileDirectory + "/" + "all.csv")
 			if err != nil {
-				fmt.Println("Error creating CSV file:", err)
+				ReportLogger.Errorf("Error creating CSV file:", err)
 			}
 
 			err = ReportDataToCSV(mergeResult, p.TranColumns, file)
 			if err != nil {
-				fmt.Println("Error writing to CSV:", err)
+				ReportLogger.Errorf("Error writing to CSV:", err)
 			}
 			mergeResult = make([]map[string]interface{}, 0)
 			fileList = append(fileList, fileDirectory+"/"+"all.csv")
@@ -349,7 +372,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 
 	zipFile, err := os.Create(p.FilePath)
 	if err != nil {
-		fmt.Println("Error creating zip file:", err)
+		ReportLogger.Errorf("Error creating zip file:", err)
 		return err
 	}
 
@@ -360,12 +383,12 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 	for _, filename := range fileList {
 		err := addFileToZip(zipWriter, filename)
 		if err != nil {
-			fmt.Println("Error adding file to zip:", err)
+			ReportLogger.Errorf("Error adding file to zip:", err)
 			return err
 		}
 	}
 
-	fmt.Println("Successfully created zip archive:", p.FilePath)
+	ReportLogger.Infof("Successfully created zip archive:", p.FilePath)
 	zipWriter.Close()
 	zipFile.Close()
 	for _, filepath := range fileList {
