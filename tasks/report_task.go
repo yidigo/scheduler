@@ -186,6 +186,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 	}
 
 	timePoints := make([]string, 0)
+
 	switch p.Operation.Resample {
 	case "10min":
 		currentTime := time.Date(p.Start.Year(), p.Start.Month(), p.Start.Day(), p.Start.Hour(), p.Start.Minute(), 0, 0, p.Start.Location()) // Start at the beginning of t1's month
@@ -201,7 +202,6 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 			currentTime = currentTime.Add(time.Hour)
 		}
 		timePoints = append(timePoints, currentTime.Format("2006-01-02 15:04:05"))
-
 	case "day":
 		currentTime := time.Date(p.Start.Year(), p.Start.Month(), p.Start.Day(), 0, 0, 0, 0, p.Start.Location()) // Start at the beginning of t1's month
 		for currentTime.Before(p.End) {
@@ -223,54 +223,54 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 			currentTime = currentTime.AddDate(1, 1, 0)
 		}
 		timePoints = append(timePoints, currentTime.Format("2006-01-02 15:04:05"))
+	case "time":
+		timePoints = append(timePoints, p.Start.Format("2006-01-02 15:04:05"))
+		currentTime := time.Date(p.Start.Year(), p.Start.Month(), p.Start.Day(), 0, 0, 0, 0, p.Start.Location()) // Start at the beginning of t1's month
+		currentTime = currentTime.Add(24 * time.Hour)
+		for currentTime.Before(p.End) {
+			timePoints = append(timePoints, currentTime.Format("2006-01-02 15:04:05"))
+			currentTime = currentTime.Add(24 * time.Hour)
+		}
+		timePoints = append(timePoints, p.End.Format("2006-01-02 15:04:05"))
+
 	}
-	mergeResult := make([]map[string]interface{}, 0)
-	//iterate the single group like {"farm1":["001","002","003"]}
-	fields := strings.Join(p.Columns, ",")
-	for _, item := range p.Groups {
-		filename := ""
-		//iterate the time
-		for i := 0; i < len(timePoints)-1; i++ {
+	if p.Operation.Resample == "time" {
+		mergeResult := make([]map[string]interface{}, 0)
+		for _, item := range p.Groups {
+
+			sql := ""
+			//iterate the time
 			for key, values := range item {
-				//deviceDataList := make([]tools.ReportData, 0)
+				thisResult := make([]map[string]interface{}, 0)
 
-				sql := fmt.Sprintf("select %s from db_report.%s where DeviceName in %s and Time>='%s' and Time<'%s';", fields, p.ReportType, formatList(values), timePoints[i], timePoints[i+1])
-				jsonData := DoSqlProcessJson(sql)
-				var response CHDBJsonStruct
-				err := json.Unmarshal(jsonData, &response)
-				if err != nil {
-					log.Fatalf("Error unmarshaling JSON: %v", err)
+				for i := 0; i < len(timePoints)-1; i++ {
+					for _, vvv := range values {
+						parquetfile := SECONDPARQUETPATH + strings.ReplaceAll(timePoints[i][0:10], "-", "") + "/" + vvv + "*"
+						switch p.ReportType {
+						case "SummaryReport":
+							sql = fmt.Sprintf("SELECT\n    COUNT(MC082) AS Count, \n    SUM(IsEffectWind) AS EffectWindHours,\n    AVG(MC004) AS Met1sWSpdAvg,\n    MAX(MC004) AS Met1sWSpdMax,\n    MIN(MC004) AS Met1sWSpdMin,\n    AVG(MC082) AS Met30sWSpdAvg,\n    MAX(MC082) AS Met30sWSpdMax,\n    MIN(MC082) AS Met30sWSpdMin,\n    AVG(MC083) AS Met600sWSpdAvg,\n    MAX(MC083) AS Met600sWSpdMax,\n    MIN(MC083) AS Met600sWSpdMin,\n    AVG(MC093) AS MetAirDensityAvg,\n\n    (MAX(MC006) - MIN(MC006)) / ANY_VALUE(RatedPower) * 3600 AS EquivalentHours, \n    ANY_VALUE(RatedPower) AS RatedPowerData,\n    MIN(MC006) AS PreTotalGenerationFirst,\n    MAX(MC006) AS GriActiveEnergyDelLast,\n    (MAX(MC006) - MIN(MC006)) AS GriActiveEnergyDelTotal,\n    SUM(TheoreticalGeneration) AS TheoreticalGeneration,\n    MIN(MC062) AS PreTotalEleConsumptionFirst,\n    MAX(MC062) AS GriActiveEnergyRcvLast,\n    (MAX(MC062) - MIN(MC062)) AS GriActiveEnergyRcvSection,\n    AVG(MC061) AS GriActivePowerTotalAvg,\n    MAX(MC061) AS GriActivePowerTotalMax,\n    MIN(MC061) AS GriActivePowerTotalMin,\n    AVG(MD002) AS GriReactivePowerTotalAvg,\n    MAX(MD002) AS GriReactivePowerTotalMax,\n    MIN(MD002) AS GriReactivePowerTotalMin,\n    AVG(MC085) AS CnvGenPower30sAvg,\n    MAX(MC085) AS CnvGenPower30sMax,\n    MIN(MC085) AS CnvGenPower30sMin,\n    AVG(MC086) AS CnvGenPower600sAvg,\n    MAX(MC086) AS CnvGenPower600sMax,\n    MIN(MC086) AS CnvGenPower600sMin,\n    \n    COUNT(CASE WHEN MD001 >= RatedPower THEN 1 END) AS FullLoadDurationDay, \n    SUM(Generation) / 10000.0 AS GriActiveEnergyDelUnit,\n    SUM(Consumption) / 10000.0 AS GriActiveEnergyRcvUnit,\n\n\n    AVG(MC015) AS MetTmpAvg,\n    MAX(MC015) AS MetTmpMax,\n    MIN(MC015) AS MetTmpMin,\n    AVG(MC014) AS NacTmpAvg,\n    MAX(MC014) AS NacTmpMax,\n    MIN(MC014) AS NacTmpMin,\n    AVG(MC091) AS TowCbtTmpAvg,\n    MAX(MC091) AS TowCbtTmpMax,\n    MIN(MC091) AS TowCbtTmpMin,\n    SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) AS YawAcwHours,\n    SUM(CASE WHEN YawCcwTimes = 1 THEN 1 ELSE 0 END) AS YawAcwTimes, \n    SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END) AS YawCwHours,\n    SUM(YawCwTimes) AS YawCwTimesSum, \n    (SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) + SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END)) AS YawHoursTotal,\n    SUM(CASE WHEN MA2353 = 1 THEN 1 ELSE 0 END) AS GenReactQLimitStateDuration,\n    SUM(GenReactQLimitStateTimes) AS GenReactQLimitStateTimesSum\nFROM\n    file('%s', Parquet) \nWHERE\n time>='%s' and time<'%s';", parquetfile, timePoints[i], timePoints[i+1])
+						case "TurbineAvailabilityMetrics":
+							sql = fmt.Sprintf("WITH AggregatedData AS (\n    SELECT\n        SUM(CASE WHEN MC143 = 40 THEN 1 ELSE 0 END) AS FaultShutdownDuration,\n        SUM(CASE WHEN MC143 = 50 THEN 1 ELSE 0 END) AS OverhaulDuration,\n        SUM(CASE WHEN MC143 = 60 THEN 1 ELSE 0 END) AS MaintenanceDuration, \n        SUM(CASE WHEN MC143 = 70 THEN 1 ELSE 0 END) AS GridShutdownDuration,\n        SUM(CASE WHEN MC143 = 81 THEN 1 ELSE 0 END) AS LocalShutdownDuration,\n        SUM(CASE WHEN MC143 = 80 THEN 1 ELSE 0 END) AS RemoteShutdownDuration,\n        SUM(CASE WHEN MC143 = 90 THEN 1 ELSE 0 END) AS WeatherShutdownDuration,\n        SUM(CASE WHEN MC143 = 110 THEN 1 ELSE 0 END) AS LimitPowerDuration,\n        SUM(CASE WHEN MC143 = 111 THEN 1 ELSE 0 END) AS LimitShutdownDuration,\n        SUM(CASE WHEN MC143 = 100 THEN 1 ELSE 0 END) AS StandbyDuration,\n        SUM(CASE WHEN MC143 = 120 THEN 1 ELSE 0 END) AS NormalGenerationDuration,\n        SUM(FaultShutdownTimes) AS FaultShutdownTimes,\n        SUM(OverhaulTimes) AS OverhaulTimes,\n        SUM(MaintenanceTimes) AS MaintenanceTimes,\n        SUM(GridShutdownTimes) AS GridShutdownTimes,\n        SUM(LocalShutdownTimes) AS LocalShutdownTimes,\n        SUM(RemoteShutdownTimes) AS RemoteShutdownTimes,\n        SUM(WeatherShutdownTimes) AS WeatherShutdownTimes,\n        SUM(LimitPowerTimes) AS LimitPowerTimes,\n        SUM(LimitShutdownTimes) AS LimitShutdownTimes,\n        SUM(StandbyTimes) AS StandbyTimes,\n        SUM(NormalGenerationTimes) AS NormalGenerationTimes,\n        SUM(InterruptionTimes) AS InterruptionTimes,\n        COUNT(*) AS Count\n    FROM file('%s', Parquet)\nWHERE\n time>='%s' and time<'%s')\nSELECT\n    FaultShutdownDuration,\n    OverhaulDuration,\n    MaintenanceDuration,\n    GridShutdownDuration,\n    LocalShutdownDuration,\n    RemoteShutdownDuration,\n    WeatherShutdownDuration,\n    LimitPowerDuration,\n    LimitShutdownDuration,\n    StandbyDuration,\n    NormalGenerationDuration,\n    FaultShutdownTimes,\n    OverhaulTimes,\n    MaintenanceTimes,\n    GridShutdownTimes,\n    LocalShutdownTimes,\n    RemoteShutdownTimes,\n    WeatherShutdownTimes,\n    LimitPowerTimes,\n    LimitShutdownTimes,\n    StandbyTimes,\n    NormalGenerationTimes,\n    InterruptionTimes,\n    Count,\n    (MaintenanceDuration+GridShutdownDuration +LocalShutdownDuration +RemoteShutdownDuration +WeatherShutdownDuration +LimitPowerDuration +LimitShutdownDuration +StandbyDuration +NormalGenerationDuration) as Availabletime,\n    (FaultShutdownDuration + OverhaulDuration) as UnAvailabletime,\n    (1.0 - (FaultShutdownDuration + OverhaulDuration) * 1.0 / NULLIF(Count, 0)) AS Availability,\n    (600 - Count) AS InterruptionDuration_Calculated, \n    ((Count - FaultShutdownDuration) * 1.0 / NULLIF(FaultShutdownTimes, 0)) AS MTBFDuration,\n    (FaultShutdownDuration * 1.0 / NULLIF(FaultShutdownTimes, 0)) AS MTTRDuration\nFROM\n    AggregatedData;", parquetfile, timePoints[i], timePoints[i+1])
+						case "EfficiencyMetrics":
+							sql = fmt.Sprintf("WITH SourceData AS (\n    SELECT\n        MC006,\n        preTotalGeneration,\n        FaultLossGeneration,\n        OverhaulLossGeneration,\n        MaintainLossGeneration,\n        GridLossGeneration,\n        RemoteLossGeneration,\n        LocalLossGeneration,\n        WeatherLossGeneration,\n        LimitLossGeneration,\n        TheoreticalGeneration,\n        ROW_NUMBER() OVER (ORDER BY time DESC) AS rn_desc,\n        ROW_NUMBER() OVER (ORDER BY time ASC) AS rn_asc\n    FROM file('%s', Parquet)\nWHERE\n time>='%s' and time<'%s' ),\nAggregatedValues AS (\n    SELECT\n        count(MC006) AS Count,\n        MAX(CASE WHEN rn_desc = 1 THEN MC006 END) AS latest_mc006,\n        MAX(CASE WHEN rn_asc = 1 THEN preTotalGeneration END) AS earliest_preTotalGeneration,\n        SUM(FaultLossGeneration) AS sum_fault_loss,\n        SUM(OverhaulLossGeneration) AS sum_overhaul_loss,\n        SUM(MaintainLossGeneration) AS sum_maintain_loss,\n        SUM(GridLossGeneration) AS sum_grid_loss,\n        SUM(RemoteLossGeneration) AS sum_remote_loss,\n        SUM(LocalLossGeneration) AS sum_local_loss,\n        SUM(WeatherLossGeneration) AS sum_weather_loss,\n        SUM(LimitLossGeneration) AS sum_limit_loss,\n        SUM(TheoreticalGeneration) AS sum_theoretical_gen\n    FROM SourceData\n),\nCalculatedMetrics AS (\n    SELECT\n        Count,\n        latest_mc006,\n        earliest_preTotalGeneration,\n        sum_theoretical_gen,\n        (latest_mc006 - earliest_preTotalGeneration) AS actual_generation_delta,\n        (sum_fault_loss + sum_overhaul_loss + sum_maintain_loss + \n         sum_grid_loss + sum_remote_loss + sum_local_loss + \n         sum_weather_loss) / 3600.0 AS total_loss_div_3600,\n        sum_fault_loss / 3600.0 / 10000.0 AS FaultLossGeneration,\n        sum_overhaul_loss / 3600.0 / 10000.0 AS OverhaulLossGeneration,\n        sum_maintain_loss / 3600.0 / 10000.0 AS MaintainLossGeneration,\n        sum_grid_loss / 3600.0 / 10000.0 AS GridLossGeneration,\n        sum_local_loss / 3600.0 / 10000.0 AS LocalLossGeneration,\n        sum_remote_loss / 3600.0 / 10000.0 AS RemoteLossGeneration,\n        sum_weather_loss / 3600.0 / 10000.0 AS WeatherLossGeneration,\n        sum_limit_loss / 3600.0 / 10000.0 AS LimitLossGeneration\n    FROM AggregatedValues\n)\nSELECT\n    Count,\n    (1.0 - (actual_generation_delta / \n            NULLIF(actual_generation_delta + total_loss_div_3600, 0))) * 100.0 AS Discrepancy,\n    (actual_generation_delta / NULLIF(sum_theoretical_gen, 0)) * 3600.0 * 100.0 AS EnergyAvailability,\n    FaultLossGeneration,\n    OverhaulLossGeneration,\n    MaintainLossGeneration,\n    GridLossGeneration,\n    LocalLossGeneration,\n    RemoteLossGeneration,\n    WeatherLossGeneration,\n    LimitLossGeneration\nFROM CalculatedMetrics;", parquetfile, timePoints[i], timePoints[i+1])
+						}
+
+						jsonData := DoSqlProcessJson(sql)
+						var response CHDBJsonStruct
+						err := json.Unmarshal(jsonData, &response)
+						if err != nil {
+							log.Fatalf("Error unmarshaling JSON: %v", err)
+						}
+						thisResult = append(thisResult, response.Data...)
+					}
 				}
-				//deviceDataList = append(deviceDataList, response.Data...)
-
-				group_result := MergeData(response.Data)
-				date, _ := time.Parse("2006-01-02 15:04:05", timePoints[i])
-
+				group_result := MergeData(thisResult)
+				date, _ := time.Parse("2006-01-02 15:04:05", timePoints[0])
 				group_result["Time"] = date
 				group_result["DeviceName"] = key
-
-				filename = key
 				mergeResult = append(mergeResult, group_result)
 			}
 		}
-		if p.Operation.Merge == false {
-			file, err := os.Create(fileDirectory + "/" + filename + ".csv")
-			if err != nil {
-				fmt.Println("Error creating CSV file:", err)
-				continue
-			}
-
-			err = ReportDataToCSV(mergeResult, p.TranColumns, file)
-			if err != nil {
-				fmt.Println("Error writing to CSV:", err)
-				continue
-			}
-			fileList = append(fileList, fileDirectory+"/"+filename+".csv")
-			mergeResult = make([]map[string]interface{}, 0)
-			file.Close()
-		}
-	}
-	if p.Operation.Merge == true {
 		file, err := os.Create(fileDirectory + "/" + "all.csv")
 		if err != nil {
 			fmt.Println("Error creating CSV file:", err)
@@ -284,6 +284,67 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 		fileList = append(fileList, fileDirectory+"/"+"all.csv")
 		file.Close()
 
+	} else {
+		mergeResult := make([]map[string]interface{}, 0)
+		//iterate the single group like {"farm1":["001","002","003"]}
+		fields := strings.Join(p.Columns, ",")
+		for _, item := range p.Groups {
+			filename := ""
+			//iterate the time
+			for i := 0; i < len(timePoints)-1; i++ {
+				for key, values := range item {
+					//deviceDataList := make([]tools.ReportData, 0)
+
+					sql := fmt.Sprintf("select %s from db_report.%s where DeviceName in %s and Time>='%s' and Time<'%s';", fields, p.ReportType, formatList(values), timePoints[i], timePoints[i+1])
+					jsonData := DoSqlProcessJson(sql)
+					var response CHDBJsonStruct
+					err := json.Unmarshal(jsonData, &response)
+					if err != nil {
+						log.Fatalf("Error unmarshaling JSON: %v", err)
+					}
+					//deviceDataList = append(deviceDataList, response.Data...)
+
+					group_result := MergeData(response.Data)
+					date, _ := time.Parse("2006-01-02 15:04:05", timePoints[i])
+
+					group_result["Time"] = date
+					group_result["DeviceName"] = key
+
+					filename = key
+					mergeResult = append(mergeResult, group_result)
+				}
+			}
+			if p.Operation.Merge == false {
+				file, err := os.Create(fileDirectory + "/" + filename + ".csv")
+				if err != nil {
+					fmt.Println("Error creating CSV file:", err)
+					continue
+				}
+
+				err = ReportDataToCSV(mergeResult, p.TranColumns, file)
+				if err != nil {
+					fmt.Println("Error writing to CSV:", err)
+					continue
+				}
+				fileList = append(fileList, fileDirectory+"/"+filename+".csv")
+				mergeResult = make([]map[string]interface{}, 0)
+				file.Close()
+			}
+		}
+		if p.Operation.Merge == true {
+			file, err := os.Create(fileDirectory + "/" + "all.csv")
+			if err != nil {
+				fmt.Println("Error creating CSV file:", err)
+			}
+
+			err = ReportDataToCSV(mergeResult, p.TranColumns, file)
+			if err != nil {
+				fmt.Println("Error writing to CSV:", err)
+			}
+			mergeResult = make([]map[string]interface{}, 0)
+			fileList = append(fileList, fileDirectory+"/"+"all.csv")
+			file.Close()
+		}
 	}
 
 	zipFile, err := os.Create(p.FilePath)

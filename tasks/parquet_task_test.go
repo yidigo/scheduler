@@ -199,3 +199,52 @@ func TestContinuousQueries(t *testing.T) {
 		})
 	}
 }
+
+func TestDownloadReportPeriodTaskAdd(t *testing.T) {
+	req := DownloadReportPayload{
+		Groups: []map[string][]string{
+			{
+				"F1245_001": {"F1245_001", "F1245_002"},
+			}, {
+				"F1245_002": {"F1245_002", "F1245_002"},
+			},
+		},
+		ReportType: "TurbineAvailabilityMetrics",
+		Start:      time.Date(2025, 5, 22, 2, 3, 0, 0, time.UTC),
+		End:        time.Date(2025, 5, 23, 1, 0, 0, 0, time.UTC),
+		Columns:    []string{"Time", "DeviceName", "GriActiveEnergyDelTotal", "GriActiveEnergyRcvSection", "GriActivePowerTotalMax", "GriReactivePowerTotalMin", "TheoreticalGeneration", "PreTotalEleConsumptionFirst"},
+		TranColumns: map[string]string{
+			"Time":                        "Time",
+			"DeviceName":                  "DeviceName",
+			"GriActiveEnergyDelTotal":     "GriActiveEnergyDelTotal",
+			"GriActiveEnergyRcvSection":   "GriActiveEnergyRcvSection",
+			"GriActivePowerTotalMax":      "GriActivePowerTotalMax",
+			"GriReactivePowerTotalMin":    "GriReactivePowerTotalMin",
+			"TheoreticalGeneration":       "TheoreticalGeneration",
+			"PreTotalEleConsumptionFirst": "PreTotalEleConsumptionFirst",
+		},
+		Operation: ReportOperation{
+			"time",
+			false,
+		},
+		FilePath:      "/tmp/tt1.zip",
+		TaskStartTime: time.Now(),
+		Language:      "en",
+	}
+
+	type args struct {
+		filePath    string
+		parquetPath string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{name: "m1", args: args{filePath: "", parquetPath: "/tmp/"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			DownloadReportTaskAdd(req)
+		})
+	}
+}
