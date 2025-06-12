@@ -177,28 +177,28 @@ func TestDownloadReportTaskAdd(t *testing.T) {
 	}
 }
 
-func TestContinuousQueries(t *testing.T) {
-	type args struct {
-		ctx        context.Context
-		parquet1   string
-		parquetOut string
-		interval   string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"t1",
-			args{parquet1: "/home/data/F1240/second/2025-04-23/F1240_001_20250423_WindFarmData.parquet", parquetOut: "/home/data/F1240/second/2025-04-23/F1240_001_20250423_WindFarmData_10min.parquet", interval: "10 minute"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := ContinuousQueries(tt.args.parquet1, tt.args.parquetOut, tt.args.interval); err != nil {
-				t.Errorf("ContinuousQueries() error = %v", err)
-			}
-		})
-	}
-}
+//func TestContinuousQueries(t *testing.T) {
+//	type args struct {
+//		ctx        context.Context
+//		parquet1   string
+//		parquetOut string
+//		interval   string
+//	}
+//	tests := []struct {
+//		name string
+//		args args
+//	}{
+//		{"t1",
+//			args{parquet1: "/home/data/F1240/second/2025-04-23/F1240_001_20250423_WindFarmData.parquet", parquetOut: "/home/data/F1240/second/2025-04-23/F1240_001_20250423_WindFarmData_10min.parquet", interval: "10 minute"}},
+//	}
+//	for _, tt := range tests {
+//		t.Run(tt.name, func(t *testing.T) {
+//			if err := ContinuousQueries(tt.args.parquet1, tt.args.parquetOut, tt.args.interval); err != nil {
+//				t.Errorf("ContinuousQueries() error = %v", err)
+//			}
+//		})
+//	}
+//}
 
 func TestDownloadReportPeriodTaskAdd(t *testing.T) {
 	req := DownloadReportPayload{

@@ -10,7 +10,7 @@ import (
 
 func MergeParquetTaskAdd(filePath, parquetPath string) {
 	client := asynq.NewClient(asynq.RedisClientOpt{
-		Addr: REDISRUL,
+		Addr: taskConfig.RedisAddr,
 		//Password: "123456",
 		DB: 8,
 	})
@@ -38,7 +38,7 @@ func MergeParquetTaskAdd(filePath, parquetPath string) {
 
 func DownloadParquetTaskAdd(dp DownloadParquetPayload) {
 	client := asynq.NewClient(asynq.RedisClientOpt{
-		Addr: REDISRUL,
+		Addr: taskConfig.RedisAddr,
 		DB:   8,
 	})
 	defer client.Close()
@@ -64,7 +64,7 @@ func DownloadParquetTaskAdd(dp DownloadParquetPayload) {
 
 func DownloadReportTaskAdd(dp DownloadReportPayload) {
 	client := asynq.NewClient(asynq.RedisClientOpt{
-		Addr: REDISRUL,
+		Addr: taskConfig.RedisAddr,
 		DB:   8,
 	})
 	defer client.Close()

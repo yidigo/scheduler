@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/Knetic/govaluate"
 	"github.com/hibiken/asynq"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
@@ -49,6 +50,7 @@ type DownloadReportPayload struct {
 	Columns       []string              `v:"required" dc:"columns name"`
 	TranColumns   map[string]string     `v:"required" json:"tran_columns" dc:"standard name to nick name"`
 	Operation     ReportOperation       `v:"required" dc:"data process method"`
+	Expression    map[string]string     `dc:"expression for some variable"`
 	FilePath      string                `dc:"output file path"`
 	TaskStartTime time.Time             `dc:"task start time"`
 	Language      string                `dc:"language"`
@@ -59,69 +61,10 @@ type ReportOperation struct {
 	Merge    bool   `json:"merge" dc:"column name"`
 }
 
-type ReportData struct {
-	Time                     string `json:"Time"`
-	DeviceName               string `json:"DeviceName"`
-	FaultShutdownDuration    uint64 `json:"FaultShutdownDuration"`
-	OverhaulDuration         uint64 `json:"OverhaulDuration"`
-	MaintenanceDuration      uint64 `json:"MaintenanceDuration"`
-	GridShutdownDuration     uint64 `json:"GridShutdownDuration"`
-	LocalShutdownDuration    uint64 `json:"LocalShutdownDuration"`
-	RemoteShutdownDuration   uint64 `json:"RemoteShutdownDuration"`
-	WeatherShutdownDuration  uint64 `json:"WeatherShutdownDuration"`
-	LimitPowerDuration       uint64 `json:"LimitPowerDuration"`
-	LimitShutdownDuration    uint64 `json:"LimitShutdownDuration"`
-	StandbyDuration          uint64 `json:"StandbyDuration"`
-	NormalGenerationDuration uint64 `json:"NormalGenerationDuration"`
-	InterruptionDuration     int64  `json:"InterruptionDuration"`
-
-	FaultShutdownTimes    uint64 `json:"FaultShutdownTimes"`
-	OverhaulTimes         uint64 `json:"OverhaulTimes"`
-	MaintenanceTimes      uint64 `json:"MaintenanceTimes"`
-	GridShutdownTimes     uint64 `json:"GridShutdownTimes"`
-	LocalShutdownTimes    uint64 `json:"LocalShutdownTimes"`
-	RemoteShutdownTimes   uint64 `json:"RemoteShutdownTimes"`
-	WeatherShutdownTimes  uint64 `json:"WeatherShutdownTimes"`
-	LimitPowerTimes       uint64 `json:"LimitPowerTimes"`
-	LimitShutdownTimes    uint64 `json:"LimitShutdownTimes"`
-	StandbyTimes          uint64 `json:"StandbyTimes"`
-	NormalGenerationTimes uint64 `json:"NormalGenerationTimes"`
-	InterruptionTimes     uint64 `json:"InterruptionTimes"`
-
-	TheoreticalGeneration float64 `json:"TheoreticalGeneration"`
-
-	GriActivePowerTotalAvg float64 `json:"GriActivePowerTotal_avg"`
-	GriActivePowerTotalMax float64 `json:"GriActivePowerTotal_max"`
-	GriActivePowerTotalMin float64 `json:"GriActivePowerTotal_min"`
-
-	GriReactivePowerTotalAvg float64 `json:"GriReactivePowerTotal_avg"`
-	GriReactivePowerTotalMax float64 `json:"GriReactivePowerTotal_max"`
-	GriReactivePowerTotalMin float64 `json:"GriReactivePowerTotal_min"`
-
-	CnvGenPower30sAvg float64 `json:"CnvGenPower30s_avg"`
-	CnvGenPower30sMax float64 `json:"CnvGenPower30s_max"`
-	CnvGenPower30sMin float64 `json:"CnvGenPower30s_min"`
-
-	CnvGenPower600sAvg float64 `json:"CnvGenPower600s_avg"`
-	CnvGenPower600sMax float64 `json:"CnvGenPower600s_max"`
-	CnvGenPower600sMin float64 `json:"CnvGenPower600s_min"`
-
-	AllCount     uint64  `json:"AllCount"`
-	MTBFDuration float64 `json:"MTBFDuration"`
-	MTTRDuration float64 `json:"MTTRDuration"`
-	RatedPower   float64 `json:"RatedPower"`
-
-	PreTotalGenerationFirst float64 `json:"preTotalGeneration_first"`
-
-	GriActiveEnergyDelLast  float64 `json:"GriActiveEnergyDel_last"`
-	GriActiveEnergyDelTotal float64 `json:"GriActiveEnergyDel_total"`
-
-	PreTotalEleConsumptionFirst float64 `json:"preTotalEleConsumption_first"`
-
-	GriActiveEnergyRcvLast    float64 `json:"GriActiveEnergyRcv_last"`
-	GriActiveEnergyRcvSection float64 `json:"GriActiveEnergyRcv_section"`
-
-	Availability float64 `json:"Availability"`
+type CalculateReportPayload struct {
+	ReportKey string    `v:"required" dc:"report name" summary:"SummaryReport,TurbineAvailabilityMetrics,EfficiencyMetrics"`
+	FilePath  string    `dc:"output file path"`
+	DataStr   time.Time `dc:"task start time"`
 }
 
 func formatList(list []string) string {
@@ -166,7 +109,7 @@ type Meta struct {
 
 func DoSqlProcessJson(data string) []byte {
 	t1 := time.Now()
-	url := CHDBURL + "?add_http_cors_header=1&default_format=JSON&max_result_rows=1000&max_result_bytes=10000000&result_overflow_mode=break&"
+	url := taskConfig.ClickHouseURL + "?add_http_cors_header=1&default_format=JSON&max_result_rows=1000&max_result_bytes=10000000&result_overflow_mode=break&"
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
 	if err != nil {
@@ -194,7 +137,8 @@ func DoSqlProcessJson(data string) []byte {
 func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 	//接收任务数据.
 	fileList := make([]string, 0)
-	fileDirectory := filepath.Join("/tmp/", time.Now().Format("20060102150405"), "/")
+	fileDirectory := filepath.Join("/tmp/", "scheduler_reports", time.Now().Format("20060102150405")+"_"+generateRandomString(8))
+	defer os.RemoveAll(fileDirectory)
 	if _, err := os.Stat(fileDirectory); os.IsNotExist(err) {
 		err := os.MkdirAll(fileDirectory, os.ModeDir|0755) // Creates parent directories if needed
 		if err != nil {
@@ -205,6 +149,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 	var p DownloadReportPayload
 	//fmt.Println(t.Payload())
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		taskLogger.Error("json.Unmarshal failed for DownloadReportPayload:", err)
 		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
 	}
 
@@ -268,7 +213,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 
 				for i := 0; i < len(timePoints)-1; i++ {
 					for _, vvv := range values {
-						parquetfile := SECONDPARQUETPATH + strings.ReplaceAll(timePoints[i][0:10], "-", "") + "/" + vvv + "*"
+						parquetfile := taskConfig.SecondParquetPath + strings.ReplaceAll(timePoints[i][0:10], "-", "") + "/" + vvv + "*"
 						switch p.ReportType {
 						case "SummaryReport":
 							sql = fmt.Sprintf("SELECT\n    COUNT(MC082) AS Count, \n    SUM(IsEffectWind) AS EffectWindHours,\n    AVG(MC004) AS Met1sWSpdAvg,\n    MAX(MC004) AS Met1sWSpdMax,\n    MIN(MC004) AS Met1sWSpdMin,\n    AVG(MC082) AS Met30sWSpdAvg,\n    MAX(MC082) AS Met30sWSpdMax,\n    MIN(MC082) AS Met30sWSpdMin,\n    AVG(MC083) AS Met600sWSpdAvg,\n    MAX(MC083) AS Met600sWSpdMax,\n    MIN(MC083) AS Met600sWSpdMin,\n    AVG(MC093) AS MetAirDensityAvg,\n\n    (MAX(MC006) - MIN(MC006)) / ANY_VALUE(RatedPower) * 3600 AS EquivalentHours, \n    ANY_VALUE(RatedPower) AS RatedPowerData,\n    MIN(MC006) AS PreTotalGenerationFirst,\n    MAX(MC006) AS GriActiveEnergyDelLast,\n    (MAX(MC006) - MIN(MC006)) AS GriActiveEnergyDelTotal,\n    SUM(TheoreticalGeneration) AS TheoreticalGeneration,\n    MIN(MC062) AS PreTotalEleConsumptionFirst,\n    MAX(MC062) AS GriActiveEnergyRcvLast,\n    (MAX(MC062) - MIN(MC062)) AS GriActiveEnergyRcvSection,\n    AVG(MC061) AS GriActivePowerTotalAvg,\n    MAX(MC061) AS GriActivePowerTotalMax,\n    MIN(MC061) AS GriActivePowerTotalMin,\n    AVG(MD002) AS GriReactivePowerTotalAvg,\n    MAX(MD002) AS GriReactivePowerTotalMax,\n    MIN(MD002) AS GriReactivePowerTotalMin,\n    AVG(MC085) AS CnvGenPower30sAvg,\n    MAX(MC085) AS CnvGenPower30sMax,\n    MIN(MC085) AS CnvGenPower30sMin,\n    AVG(MC086) AS CnvGenPower600sAvg,\n    MAX(MC086) AS CnvGenPower600sMax,\n    MIN(MC086) AS CnvGenPower600sMin,\n    \n    COUNT(CASE WHEN MD001 >= RatedPower THEN 1 END) AS FullLoadDurationDay, \n    SUM(Generation) / 10000.0 AS GriActiveEnergyDelUnit,\n    SUM(Consumption) / 10000.0 AS GriActiveEnergyRcvUnit,\n\n\n    AVG(MC015) AS MetTmpAvg,\n    MAX(MC015) AS MetTmpMax,\n    MIN(MC015) AS MetTmpMin,\n    AVG(MC014) AS NacTmpAvg,\n    MAX(MC014) AS NacTmpMax,\n    MIN(MC014) AS NacTmpMin,\n    AVG(MC091) AS TowCbtTmpAvg,\n    MAX(MC091) AS TowCbtTmpMax,\n    MIN(MC091) AS TowCbtTmpMin,\n    SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) AS YawAcwHours,\n    SUM(CASE WHEN YawCcwTimes = 1 THEN 1 ELSE 0 END) AS YawAcwTimes, \n    SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END) AS YawCwHours,\n    SUM(YawCwTimes) AS YawCwTimesSum, \n    (SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) + SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END)) AS YawHoursTotal,\n    SUM(CASE WHEN MA2353 = 1 THEN 1 ELSE 0 END) AS GenReactQLimitStateDuration,\n    SUM(GenReactQLimitStateTimes) AS GenReactQLimitStateTimesSum\nFROM\n    file('%s', Parquet) \nWHERE\n time>='%s' and time<'%s';", parquetfile, timePoints[i], timePoints[i+1])
@@ -287,11 +232,23 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 						thisResult = append(thisResult, response.Data...)
 					}
 				}
-				group_result := MergeData(thisResult)
+				groupResult := MergeData(thisResult)
 				date, _ := time.Parse("2006-01-02 15:04:05", timePoints[0])
-				group_result["Time"] = date
-				group_result["DeviceName"] = key
-				mergeResult = append(mergeResult, group_result)
+				groupResult["Time"] = date
+				groupResult["DeviceName"] = key
+				//calculate the expression
+				for k, v := range p.Expression {
+					expression2, err := govaluate.NewEvaluableExpression(v)
+					if err != nil {
+						fmt.Println("表达式语法错误: %v", err)
+					}
+					groupResult[k], err = expression2.Evaluate(groupResult)
+					if err != nil {
+						log.Fatalf("计算错误: %v", err)
+					}
+				}
+
+				mergeResult = append(mergeResult, groupResult)
 			}
 		}
 		file, err := os.Create(fileDirectory + "/" + "all.csv")
@@ -327,14 +284,26 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 					}
 					//deviceDataList = append(deviceDataList, response.Data...)
 
-					group_result := MergeData(response.Data)
+					groupResult := MergeData(response.Data)
 					date, _ := time.Parse("2006-01-02 15:04:05", timePoints[i])
 
-					group_result["Time"] = date
-					group_result["DeviceName"] = key
+					groupResult["Time"] = date
+					groupResult["DeviceName"] = key
+
+					//calculate the expression
+					for k, v := range p.Expression {
+						expression2, err := govaluate.NewEvaluableExpression(v)
+						if err != nil {
+							fmt.Println("表达式语法错误: %v", err)
+						}
+						groupResult[k], err = expression2.Evaluate(groupResult)
+						if err != nil {
+							log.Fatalf("计算错误: %v", err)
+						}
+					}
 
 					filename = key
-					mergeResult = append(mergeResult, group_result)
+					mergeResult = append(mergeResult, groupResult)
 				}
 			}
 			if p.Operation.Merge == false {
@@ -354,7 +323,7 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 				file.Close()
 			}
 		}
-		if p.Operation.Merge == true {
+		if p.Operation.Merge == true && len(mergeResult) > 0 {
 			file, err := os.Create(fileDirectory + "/" + "all.csv")
 			if err != nil {
 				ReportLogger.Errorf("Error creating CSV file:", err)
@@ -642,6 +611,33 @@ func ReportDataToCSV(data []map[string]interface{}, columns map[string]string, w
 	if err := csvWriter.Error(); err != nil {
 		return fmt.Errorf("error flushing CSV writer: %w", err)
 	}
+
+	return nil
+}
+
+func HandleCalculateReportTask(ctx context.Context, t *asynq.Task) error {
+	//接收任务数据.
+	var p CalculateReportPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		taskLogger.Error("json.Unmarshal failed for DownloadReportPayload:", err)
+		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+	}
+
+	// Now, a single call handles all three report calculations and insertions efficiently.
+	if err := CalculateAndInsertCombinedReport(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
+		ReportLogger.Errorf("Calculate Combined Report task error: %s", err)
+	}
+	//
+	//
+	//if err := CalculateSummaryData(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
+	//	ReportLogger.Errorf("Calculate Report task error: %s", err)
+	//}
+	//if err := CalculateTurbineAvailabilityMetrics(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
+	//	ReportLogger.Errorf("Calculate Report task error: %s", err)
+	//}
+	//if err := CalculateEfficiencyMetrics(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
+	//	ReportLogger.Errorf("Calculate Report task error: %s", err)
+	//}
 
 	return nil
 }
