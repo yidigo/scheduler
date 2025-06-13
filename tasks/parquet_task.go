@@ -126,14 +126,8 @@ func extractIDRegex(filePath string) (string, error) {
 	return id, nil
 }
 
-func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
-	var p MergeParquetPayload
-	//fmt.Println(string(t.Payload()))
-	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		taskLogger.Error("json.Unmarshal failed for MergeParquetPayload:", err) // 使用 taskLogger
-		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
-	}
-
+// func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
+func HandleMergeParquetWithDifferentSchema(p MergeParquetPayload) error {
 	var sc1, sc2 *arrow.Schema
 	var err error
 	if FileExists(p.FilePath1) {
@@ -194,7 +188,7 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	}
 }
 
-func HandleMergeParquetTaskwithUnion(ctx context.Context, t *asynq.Task) error {
+func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	var p MergeParquetPayload
 	//fmt.Println(string(t.Payload()))
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
@@ -226,8 +220,12 @@ func HandleMergeParquetTaskwithUnion(ctx context.Context, t *asynq.Task) error {
 		}
 		return nil
 	} else {
-		taskLogger.Errorf("Error when merge parquet file :%s", result)
-		taskLogger.Errorf(string(result))
+		taskLogger.Infof("the file with different schema, need to merge")
+		err = HandleMergeParquetWithDifferentSchema(p)
+		if err != nil {
+			taskLogger.Errorf("Error when merge parquet file :%s", result)
+			taskLogger.Errorf(string(result))
+		}
 		return errors.New(string(result))
 	}
 }
