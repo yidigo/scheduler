@@ -200,13 +200,32 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 		taskLogger.Errorf("Error for device id regex: %v\n", err)
 		return err
 	}
+
+	_, err = os.Stat(p.FilePath1)
+	if err != nil {
+		err = moveFile(p.FilePath2, p.TargetPath)
+		if err != nil {
+			taskLogger.Errorf("Error deleting file:", err)
+		}
+		err = os.Remove(p.FilePath2)
+		if err != nil {
+			taskLogger.Errorf("Error deleting file:", err)
+		}
+		return nil
+	}
+
 	tmpPath := filepath.Dir(p.TargetPath) + "/" + deviceID + ".parquet"
 	generateSql := fmt.Sprintf("INSERT INTO FUNCTION file('%s', 'Parquet')\nSELECT * FROM file('%s', 'Parquet')\nUNION ALL\nSELECT * FROM file('%s', 'Parquet');", tmpPath, p.FilePath1, p.FilePath2)
 	taskLogger.Infof(generateSql)
 	result, err := ExecuteCHQueryValues(generateSql) // 使用新的 HTTP client 函数
 	if err != nil {
-		taskLogger.Errorf("Error executing merge Parquet SQL: %v", err, logger.Fields{"sql": generateSql})
-		return err // 返回错误，让 Asynq 处理重试 (如果配置了)
+		taskLogger.Infof("the file with different schema, need to merge")
+		err = HandleMergeParquetWithDifferentSchema(p)
+		if err != nil {
+			taskLogger.Errorf("Error when merge parquet file :%s", result)
+			taskLogger.Errorf(string(result))
+		}
+		return errors.New(string(result))
 	}
 	//check if the generate file influence the original select
 	if len(result) == 0 {

@@ -51,7 +51,7 @@ func LoadConfig() (*AppConfig, error) {
 	logMaxBackups, _ := strconv.Atoi(getEnv("LOG_MAX_BACKUPS", "3"))
 	logMaxAge, _ := strconv.Atoi(getEnv("LOG_MAX_AGE_DAYS", "28"))
 	logCompress, _ := strconv.ParseBool(getEnv("LOG_COMPRESS", "true"))
-	asynqConcurrency, _ := strconv.Atoi(getEnv("ASYNQ_CONCURRENCY", "1"))
+	asynqConcurrency, _ := strconv.Atoi(getEnv("ASYNQ_CONCURRENCY", "3"))
 	httpClientTimeoutSec, _ := strconv.Atoi(getEnv("HTTP_CLIENT_TIMEOUT_SECONDS", "30"))
 
 	logLevel, err := logger.StringToLevel(getEnv("LOG_LEVEL", "INFO")) // 使用 StringToLevel
