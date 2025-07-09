@@ -25,7 +25,7 @@ var appConfig *config.AppConfig // 全局配置
 func main() {
 	var err error
 	// 1. 加载配置
-	appConfig, err = config.LoadConfig()
+	appConfig, err = config.GetConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
@@ -79,6 +79,8 @@ func main() {
 				appConfig.ReportQueues["SummaryReport"]:              5,
 				appConfig.ReportQueues["TurbineAvailabilityMetrics"]: 5,
 				appConfig.ReportQueues["EfficiencyMetrics"]:          5,
+				appConfig.EventQueues["HistoricEvents"]:              5, // 历史事件下载
+				appConfig.EventQueues["RealtimeEvents"]:              5, // 实时事件下载
 			},
 			StrictPriority: true,
 			// 日志记录器 (Asynq V0.24.0+ 支持自定义 logger)
@@ -108,6 +110,7 @@ func main() {
 	mux.HandleFunc(tasks.TypeDownloadSecond, tasks.HandleDownloadParquetTask)
 	mux.HandleFunc(tasks.TypeDownloadReport, tasks.HandleDownloadReportTask)
 	mux.HandleFunc(tasks.TypeCalculateReport, tasks.HandleCalculateReportTask)
+	mux.HandleFunc(tasks.TypeDownloadEvent, tasks.HandleDownloadEventTask) // 历史、实时事件下载
 
 	// 6. 启动服务并处理优雅停机
 	var wg sync.WaitGroup

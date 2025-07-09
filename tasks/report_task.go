@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"scheduler/logger"
+	"scheduler/service/event_center"
+	"scheduler/utils"
 	"sort"
 	"strings"
 	"time"
@@ -65,6 +67,26 @@ type CalculateReportPayload struct {
 	ReportKey string    `v:"required" dc:"report name" summary:"SummaryReport,TurbineAvailabilityMetrics,EfficiencyMetrics"`
 	FilePath  string    `dc:"output file path"`
 	DataStr   time.Time `dc:"task start time"`
+}
+
+type DownloadEventPayload struct {
+	System        string                          `json:"system" dc:"system name"`
+	DeviceType    []string                        `json:"deviceType" dc:"device type"`
+	Devices       []*event_center.FarmDeviceEntry `json:"devices" dc:"farmCode and deviceNames"`
+	EventLevels   []int32                         `json:"eventLevels" dc:"event level"`
+	FirstEvent    int32                           `json:"firstEvent" dc:"is first event"`
+	Confirmed     int32                           `json:"confirmed" dc:"is confirmed"`
+	From          time.Time                       `json:"from" dc:"query start time"`
+	To            time.Time                       `json:"to" dc:"query end time"`
+	Page          int64                           `json:"page" dc:"page number"`
+	PageSize      int64                           `json:"pageSize" dc:"page size"`
+	Order         string                          `json:"order" dc:"order"`
+	FilePath      string                          `json:"filePath" dc:"output file path"`
+	TaskStartTime time.Time                       `json:"taskStartTime" dc:"task start time"`
+	EventType     string                          `json:"eventType" dc:"event type"`
+	Username      string                          `json:"username" dc:"user name"`
+	Category      string                          `json:"category" dc:"category"`
+	Columns       []map[string]string             `json:"columns" dc:"columns"`
 }
 
 func formatList(list []string) string {
@@ -638,6 +660,86 @@ func HandleCalculateReportTask(ctx context.Context, t *asynq.Task) error {
 	//if err := CalculateEfficiencyMetrics(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
 	//	ReportLogger.Errorf("Calculate Report task error: %s", err)
 	//}
+
+	return nil
+}
+
+func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
+	var p DownloadEventPayload
+	//fmt.Println(t.Payload())
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		taskLogger.Error("json.Unmarshal failed for DownloadEventPayload:", err)
+		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+	}
+
+	switch p.EventType {
+	case "HistoricEvents":
+		request := &event_center.Query{
+			System:            p.System,
+			Category:          p.Category,
+			Username:          p.Username,
+			FarmDeviceEntries: event_center.ToProtoFarmDeviceEntries(p.Devices),
+			FirstEvent:        p.FirstEvent,
+			EventLevels:       p.EventLevels,
+			StartTime:         p.From,
+			EndTime:           p.To,
+			Confirmed:         p.Confirmed,
+			Order:             p.Order,
+			Page:              p.Page,
+			PageSize:          p.PageSize,
+		}
+		events, _, err := event_center.GetEC().GetHistoricalEventsPage(*request)
+		if err != nil {
+			taskLogger.Error("查询历史事件失败:", err)
+			return fmt.Errorf("查询历史事件失败: %v: %w", err, asynq.SkipRetry)
+		}
+		list, err := utils.ConvertToMapList(events)
+		if err != nil {
+			taskLogger.Error("转换历史事件失败:", err)
+			return fmt.Errorf("转换历史事件失败: %v: %w", err, asynq.SkipRetry)
+		}
+		err = utils.ConvertMapListToCSV(list, p.Columns, p.FilePath)
+		if err != nil {
+			taskLogger.Error("导出历史事件失败:", err)
+			return fmt.Errorf("导出历史事件失败: %v: %w", err, asynq.SkipRetry)
+		}
+
+	case "RealtimeEvents":
+		realtimeEvents := make([]event_center.Event, 0, len(p.Devices)*10)
+		// 遍历每个设备组
+		for _, farmDeviceEntry := range p.Devices {
+			// 构造请求参数
+			request := &event_center.Query{
+				System:      p.System,
+				Category:    p.Category,
+				FarmCode:    farmDeviceEntry.FarmCode,
+				Devices:     farmDeviceEntry.DeviceNames,
+				Username:    p.Username,
+				FirstEvent:  p.FirstEvent,
+				Confirmed:   p.Confirmed,
+				EventLevels: p.EventLevels,
+				Order:       p.Order,
+			}
+
+			// 调用event_center获取实时事件
+			events, err := event_center.GetEC().GetRealtimeEvents(*request)
+			if err != nil {
+				taskLogger.Error("查询实时事件失败，farmCode:["+farmDeviceEntry.FarmCode+"]", err)
+				return fmt.Errorf("查询实时事件失败: %v: %w", err, asynq.SkipRetry)
+			}
+			realtimeEvents = append(realtimeEvents, events...)
+		}
+		list, err := utils.ConvertToMapList(realtimeEvents)
+		if err != nil {
+			taskLogger.Error("转换实时事件失败:", err)
+			return fmt.Errorf("转换实时事件失败: %v: %w", err, asynq.SkipRetry)
+		}
+		err = utils.ConvertMapListToCSV(list, p.Columns, p.FilePath)
+		if err != nil {
+			taskLogger.Error("导出实时事件失败:", err)
+			return fmt.Errorf("导出实时事件失败: %v: %w", err, asynq.SkipRetry)
+		}
+	}
 
 	return nil
 }

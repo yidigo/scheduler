@@ -39,6 +39,7 @@ const (
 	TypeDownloadSecond  = "parquet:download"
 	TypeDownloadReport  = "report:download"
 	TypeCalculateReport = "report:calculate"
+	TypeDownloadEvent   = "event:download" // 历史、实时事件下载
 )
 
 type MergeParquetPayload struct {

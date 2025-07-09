@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"scheduler/logger" // 引入你的 logger 包
@@ -29,13 +30,20 @@ type AppConfig struct {
 	CalculateReportQueue  string
 	SecondDownloadQueue   string
 	ReportQueues          map[string]string // 将原 Queues map 中的报表队列也纳入配置
+	EventQueues           map[string]string // 将原 Queues map 中的报表队列也纳入配置
 	AsynqConcurrency      int
 	HTTPClientTimeout     time.Duration
 	SecondParquetPath     string
+	EventCenterConfig     EventCenterConfig
+}
+
+type EventCenterConfig struct {
+	Addr     string //请求事件中心的地址
+	Username string
 }
 
 // LoadConfig 从环境变量加载配置 (如果存在 .env 文件，则优先加载)
-func LoadConfig() (*AppConfig, error) {
+func loadConfig() (*AppConfig, error) {
 	//_ = godotenv.Load() // 尝试加载 .env 文件，忽略错误
 
 	redisDB, err := strconv.Atoi(getEnv("REDIS_DB", "8"))
@@ -60,9 +68,11 @@ func LoadConfig() (*AppConfig, error) {
 	}
 
 	return &AppConfig{
-		RedisAddr:             getEnv("REDIS_ADDR", "127.0.0.1:59010"),
-		RedisDB:               redisDB,
-		RedisPassword:         getEnv("REDIS_PASSWORD", ""), // 默认为空密码
+		//RedisAddr: getEnv("REDIS_ADDR", "10.162.74.33:59010"),
+		RedisAddr:     getEnv("REDIS_ADDR", "127.0.0.1:59010"),
+		RedisDB:       redisDB,
+		RedisPassword: getEnv("REDIS_PASSWORD", ""), // 默认为空密码
+		//ClickHouseURL: getEnv("CLICKHOUSE_URL", "http://10.162.74.33:59011/"),
 		ClickHouseURL:         getEnv("CLICKHOUSE_URL", "http://127.0.0.1:59011/"),
 		ClickHouseUser:        getEnv("CLICKHOUSE_USER", "default"),
 		ClickHousePass:        getEnv("CLICKHOUSE_PASS", ""),
@@ -83,9 +93,17 @@ func LoadConfig() (*AppConfig, error) {
 			"TurbineAvailabilityMetrics": getEnv("QUEUE_TURBINE_AVAILABILITY_METRICS", "TurbineAvailabilityMetrics"),
 			"EfficiencyMetrics":          getEnv("QUEUE_EFFICIENCY_METRICS", "EfficiencyMetrics"),
 		},
+		EventQueues: map[string]string{ // 示例，可以根据需要扩展
+			"HistoricEvents": getEnv("QUEUE_HISTORIC_EVENTS", "HistoricEvents"),
+			"RealtimeEvents": getEnv("QUEUE_REALTIME_EVENTS", "RealtimeEvents"),
+		},
 		AsynqConcurrency:  asynqConcurrency,
 		HTTPClientTimeout: time.Duration(httpClientTimeoutSec) * time.Second,
 		SecondParquetPath: getEnv("SECOND_PARQUET_PATH", "/home/data/parquet/"),
+		EventCenterConfig: struct {
+			Addr     string
+			Username string
+		}{Addr: getEnv("EVENT_CENTER_ADDR", "127.0.0.1:59098"), Username: getEnv("EVENT_CENTER_USERNAME", "admin")},
 	}, nil
 }
 
@@ -95,4 +113,19 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// 全局变量存储配置和加载状态
+var (
+	appConfig      *AppConfig
+	appConfigErr   error
+	loadConfigOnce sync.Once
+)
+
+// GetConfig 获取应用配置
+func GetConfig() (*AppConfig, error) {
+	loadConfigOnce.Do(func() {
+		appConfig, appConfigErr = loadConfig()
+	})
+	return appConfig, appConfigErr
 }
