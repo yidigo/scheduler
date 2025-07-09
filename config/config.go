@@ -27,7 +27,7 @@ type AppConfig struct {
 	CriticalQueue         string
 	MergeParquetFileQueue string
 	CalculateReportQueue  string
-	SecondQueue           string
+	SecondDownloadQueue   string
 	ReportQueues          map[string]string // 将原 Queues map 中的报表队列也纳入配置
 	AsynqConcurrency      int
 	HTTPClientTimeout     time.Duration
@@ -76,7 +76,8 @@ func LoadConfig() (*AppConfig, error) {
 		CriticalQueue:         getEnv("QUEUE_CRITICAL", "critical"),
 		MergeParquetFileQueue: getEnv("QUEUE_MERGE_PARQUET_FILE", "MergeParquetFile"),
 		CalculateReportQueue:  getEnv("QUEUE_CALCULATE_REPORT", "CalculateReport"),
-		SecondQueue:           getEnv("QUEUE_SECOND", "second"),
+		SecondDownloadQueue:   getEnv("QUEUE_SECOND_DOWNLOAD", "SecondDownload"),
+
 		ReportQueues: map[string]string{ // 示例，可以根据需要扩展
 			"SummaryReport":              getEnv("QUEUE_SUMMARY_REPORT", "SummaryReport"),
 			"TurbineAvailabilityMetrics": getEnv("QUEUE_TURBINE_AVAILABILITY_METRICS", "TurbineAvailabilityMetrics"),

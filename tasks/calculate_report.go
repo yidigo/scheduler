@@ -148,7 +148,7 @@ func fetchAndPrepareReportData[T any](
 ) (*T, error) {
 	calculateSql := buildSelectSQL(filePath)
 	logger.Debugf("Executing SQL for %s: %s", deviceName, calculateSql)
-
+	fmt.Println(calculateSql)
 	jsonDataBytes, err := doCHQuery(calculateSql, chdburl, logger)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed for %s: %w", deviceName, err)

@@ -201,7 +201,11 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	_, err = os.Stat(p.FilePath1)
+	ii, err := os.Stat(p.FilePath1)
+	taskLogger.Infof("=================================")
+	taskLogger.Info(p.FilePath1)
+	taskLogger.Info(ii.Name())
+	taskLogger.Infof("=================================")
 	if err != nil {
 		err = moveFile(p.FilePath2, p.TargetPath)
 		if err != nil {
@@ -259,7 +263,7 @@ func moveFile(sourcePath, destPath string) error {
 	// 2. Try to rename (move) the file directly. This is atomic on the same filesystem.
 	err := os.Rename(sourcePath, destPath)
 	if err == nil {
-		fmt.Printf("Successfully moved (renamed) '%s' to '%s'\n", sourcePath, destPath)
+		//fmt.Printf("Successfully moved (renamed) '%s' to '%s'\n", sourcePath, destPath)
 		return nil // Success!
 	}
 
