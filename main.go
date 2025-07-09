@@ -75,7 +75,7 @@ func main() {
 				appConfig.CalculateReportQueue:                       60,
 				appConfig.MergeParquetFileQueue:                      30,
 				appConfig.DefaultQueue:                               10,
-				appConfig.SecondQueue:                                5,
+				appConfig.SecondDownloadQueue:                        5,
 				appConfig.ReportQueues["SummaryReport"]:              5,
 				appConfig.ReportQueues["TurbineAvailabilityMetrics"]: 5,
 				appConfig.ReportQueues["EfficiencyMetrics"]:          5,

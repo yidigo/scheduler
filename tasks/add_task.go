@@ -49,7 +49,7 @@ func DownloadParquetTaskAdd(dp DownloadParquetPayload) {
 	}
 
 	// 任务入队
-	info, err := client.Enqueue(asynq.NewTask("parquet:download", payload), asynq.Queue("second"), asynq.Retention(24*time.Hour))
+	info, err := client.Enqueue(asynq.NewTask("parquet:download", payload), asynq.Queue("SecondDownloadS"), asynq.Retention(24*time.Hour))
 
 	//info, err := client.Enqueue(task, time.Now())
 	// 延迟执行
