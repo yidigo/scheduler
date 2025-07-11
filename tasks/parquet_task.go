@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"scheduler/logger"
+	"scheduler/tasks/utils"
 	"strings"
 	"time"
 )
@@ -134,7 +135,6 @@ func HandleMergeParquetWithDifferentSchema(p MergeParquetPayload) error {
 	if FileExists(p.FilePath1) {
 		sc1, err = GetParquetSchema(p.FilePath1)
 		if err != nil {
-			taskLogger.Errorf("Error get file schema : %s\n,%v\n", err)
 			return err
 		}
 	}
@@ -142,19 +142,16 @@ func HandleMergeParquetWithDifferentSchema(p MergeParquetPayload) error {
 	if FileExists(p.FilePath2) {
 		sc2, err = GetParquetSchema(p.FilePath2)
 		if err != nil {
-			taskLogger.Errorf("Error get file schema : %s\n,%v\n", p.FilePath2, err)
 			return err
 		}
 	}
 
 	allSchema, err := MergeSchema(sc1, sc2)
 	if err != nil {
-		taskLogger.Errorf("Error merge file schema : %s   %s\n,%v\n", p.FilePath1, p.FilePath2, err)
 		return err
 	}
 	deviceID, err1 := extractIDRegex(p.FilePath1)
 	if err1 != nil {
-		taskLogger.Errorf("Error for device id regex: %v\n", err1)
 		return err
 	}
 	tableName := "temporary_table_" + deviceID
@@ -169,29 +166,26 @@ func HandleMergeParquetWithDifferentSchema(p MergeParquetPayload) error {
 	generateSql = generateSql + fmt.Sprintf("DROP table %s", tableName)
 	//fmt.Println(generateSql)
 
-	taskLogger.Debugf("Executing merge Parquet SQL: %s", generateSql)
-	result, err := ExecuteCHQueryValues(generateSql) // 使用新的 HTTP client 函数
+	result, err := utils.ExecuteCHQueryValues(taskConfig, generateSql) // 使用新的 HTTP client 函数
 	if err != nil {
-		taskLogger.Errorf("Error executing merge Parquet SQL: %v", err, logger.Fields{"sql": generateSql})
 		return err // 返回错误，让 Asynq 处理重试 (如果配置了)
 	}
 	//check if the generate file influence the original select
 	if len(result) == 0 {
 		err := os.Remove(p.FilePath2)
 		if err != nil {
-			taskLogger.Errorf("Error deleting file:", err)
+			return errors.New(fmt.Sprintf("Error deleting file: %s", err))
 		}
 		return nil
 	} else {
-		taskLogger.Errorf("Error when merge parquet file :%s", result)
-		taskLogger.Errorf(string(result))
-		return errors.New(string(result))
+		return errors.New(fmt.Sprintf("Error deleting file: %s  result is :%s ", err, string(result)))
 	}
 }
 
 func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
+	lumberjackLogger, taskLogger := logger.GenerateNewLogger("./task_log/merge_parquet.log", taskConfig.LogMaxSizeMB, taskConfig.LogMaxBackups, taskConfig.LogMaxAgeDays, taskConfig.LogCompress, taskConfig.LogLevel)
+	defer lumberjackLogger.Close()
 	var p MergeParquetPayload
-	//fmt.Println(string(t.Payload()))
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		taskLogger.Error("json.Unmarshal failed for MergeParquetPayload:", err) // 使用 taskLogger
 		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
@@ -222,7 +216,7 @@ func HandleMergeParquetTask(ctx context.Context, t *asynq.Task) error {
 	tmpPath := filepath.Dir(p.TargetPath) + "/" + deviceID + ".parquet"
 	generateSql := fmt.Sprintf("INSERT INTO FUNCTION file('%s', 'Parquet')\nSELECT * FROM file('%s', 'Parquet')\nUNION ALL\nSELECT * FROM file('%s', 'Parquet');", tmpPath, p.FilePath1, p.FilePath2)
 	taskLogger.Infof(generateSql)
-	result, err := ExecuteCHQueryValues(generateSql) // 使用新的 HTTP client 函数
+	result, err := utils.ExecuteCHQueryValues(taskConfig, generateSql) // 使用新的 HTTP client 函数
 	if err != nil {
 		taskLogger.Infof("the file with different schema, need to merge")
 		err = HandleMergeParquetWithDifferentSchema(p)
@@ -272,6 +266,9 @@ func moveFile(sourcePath, destPath string) error {
 }
 
 func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
+	lumberjackLogger, taskLogger := logger.GenerateNewLogger("./task_log/download_parquet.log", taskConfig.LogMaxSizeMB, taskConfig.LogMaxBackups, taskConfig.LogMaxAgeDays, taskConfig.LogCompress, taskConfig.LogLevel)
+	defer lumberjackLogger.Close()
+
 	//接收任务数据.
 	var p DownloadParquetPayload
 	//fmt.Println(t.Payload())
@@ -313,7 +310,7 @@ func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
 
 	if p.Operation.Merge {
 		sql := fmt.Sprintf(`SELECT toStartOfInterval(toDateTime(time), INTERVAL %s) AS interval, %s, turbine FROM file('%s*/*.parquet', Parquet) WHERE time BETWEEN '%s' AND '%s' AND turbine IN (%s) GROUP BY interval,turbine ORDER BY interval,turbine INTO OUTFILE '%s' TRUNCATE FORMAT CSVWithNames`, p.Operation.Resample, columns, taskConfig.SecondParquetPath, p.Start.Format("2006-01-02 15:04:05"), p.End.Format("2006-01-02 15:04:05"), "'"+strings.Join(p.Devices, "','")+"'", fileDirectory+"/turbines.csv")
-		result, err := ExecuteCHQueryValues(sql) // 使用新的 HTTP client 函数
+		result, err := utils.ExecuteCHQueryValues(taskConfig, sql) // 使用新的 HTTP client 函数
 		if err != nil {
 			taskLogger.Errorf("Error executing download Parquet SQL for device %s: %v", err, logger.Fields{"sql": sql})
 
@@ -324,7 +321,7 @@ func HandleDownloadParquetTask(ctx context.Context, t *asynq.Task) error {
 	} else {
 		for _, d := range p.Devices {
 			sql := fmt.Sprintf(`SELECT toStartOfInterval(toDateTime(time), INTERVAL %s) AS interval, %s, turbine FROM file('%s*/*.parquet', Parquet) WHERE time BETWEEN '%s' AND '%s' AND turbine IN (%s) GROUP BY interval,turbine ORDER BY interval,turbine INTO OUTFILE '%s' TRUNCATE FORMAT CSVWithNames`, p.Operation.Resample, columns, taskConfig.SecondParquetPath, p.Start.Format("2006-01-02 15:04:05"), p.End.Format("2006-01-02 15:04:05"), "'"+d+"'", fileDirectory+"/"+d+".csv")
-			result, err := ExecuteCHQueryValues(sql) // 使用新的 HTTP client 函数
+			result, err := utils.ExecuteCHQueryValues(taskConfig, sql) // 使用新的 HTTP client 函数
 			if err != nil {
 				taskLogger.Errorf("Error executing download Parquet SQL for device %s: %v", d, err, logger.Fields{"sql": sql})
 				continue // 跳过当前设备
@@ -594,8 +591,10 @@ func MergeSchema(schema1, schema2 *arrow.Schema) (*arrow.Schema, error) {
 				// Check for type compatibility if the field exists in both schemas.
 				existingField := fieldMap[field.Name]
 				if existingField.Type.ID() != field.Type.ID() {
-					taskLogger.Errorf("Warning: Conflicting types for field '%s'. Using type from first schema: %s, ignoring type from second schema: %s",
-						field.Name, existingField.Type.String(), field.Type.String())
+					return nil, errors.New(fmt.Sprintf("Warning: Conflicting types for field '%s'. Using type from first schema: %s, ignoring type from second schema: %s",
+						field.Name, existingField.Type.String(), field.Type.String()))
+					//taskLogger.Errorf("Warning: Conflicting types for field '%s'. Using type from first schema: %s, ignoring type from second schema: %s",
+					//	field.Name, existingField.Type.String(), field.Type.String())
 					// Ideally, resolve the type conflict by promoting to a common type, casting, or other strategies.
 					// For simplicity, we use the type from the first schema as-is.
 				}
@@ -610,7 +609,7 @@ func MergeSchema(schema1, schema2 *arrow.Schema) (*arrow.Schema, error) {
 func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 	f, err := os.Open(parquetPath)
 	if err != nil {
-		taskLogger.Errorf("failed to open Parquet file: %w", err)
+		//taskLogger.Errorf("failed to open Parquet file: %w", err)
 		return nil, err
 	}
 	defer f.Close()
@@ -618,7 +617,7 @@ func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 	// Create a new ParquetReader
 	reader, err := file.NewParquetReader(f)
 	if err != nil {
-		taskLogger.Errorf("Error creating Parquet reader: %w", err)
+		//taskLogger.Errorf("Error creating Parquet reader: %w", err)
 		return nil, err
 	}
 	defer reader.Close()
@@ -627,7 +626,7 @@ func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 	// Create a ParquetFileReader to Arrow converter
 	arrowReader, err := pqarrow.NewFileReader(reader, pqarrow.ArrowReadProperties{}, mem)
 	if err != nil {
-		taskLogger.Errorf("Error creating Arrow reader: %v\n", err)
+		//taskLogger.Errorf("Error creating Arrow reader: %v\n", err)
 		return nil, err
 	}
 	// Get the Arrow schema
@@ -653,21 +652,21 @@ func GetParquetSchema(parquetPath string) (*arrow.Schema, error) {
 
 func GetParquetSchemaCHDBDict(parquetPath string) (ResponseData, error) {
 	if !isSafePath(parquetPath, taskConfig.SecondParquetPath) && !isSafePath(parquetPath, "/mnt/another_safe_path/") { // 允许多个安全基础路径
-		taskLogger.Errorf("Unsafe path for GetParquetSchemaCHDBDict: %s", parquetPath)
+		//taskLogger.Errorf("Unsafe path for GetParquetSchemaCHDBDict: %s", parquetPath)
 		return ResponseData{}, errors.New("unsafe path for schema retrieval")
 	}
 
 	sql1 := fmt.Sprintf("set input_format_parquet_skip_columns_with_unsupported_types_in_schema_inference=1;SELECT columns FROM file('%s', ParquetMetadata)", parquetPath)
-	content1, err := ExecuteCHQueryJSON(sql1) // 假设元数据以 JSON 返回
+	content1, err := utils.ExecuteCHQueryJSON(taskConfig, sql1) // 假设元数据以 JSON 返回
 	if err != nil {
-		taskLogger.Errorf("Error getting Parquet schema from CHDB: %v", err, logger.Fields{"path": parquetPath, "sql": sql1})
+		//taskLogger.Errorf("Error getting Parquet schema from CHDB: %v", err, logger.Fields{"path": parquetPath, "sql": sql1})
 		return ResponseData{}, err
 	}
 
 	var response ResponseData
 	err = json.Unmarshal(content1, &response)
 	if err != nil {
-		taskLogger.Errorf("Error unmarshalling JSON:", err)
+		//taskLogger.Errorf("Error unmarshalling JSON:", err)
 		return response, err
 	}
 	return response, nil

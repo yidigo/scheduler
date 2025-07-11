@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -12,12 +11,12 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"scheduler/logger"
-	"scheduler/service/event_center"
-	"scheduler/utils"
+	event_center2 "scheduler/tasks/event_center"
+	"scheduler/tasks/utils"
 	"sort"
 	"strings"
 	"time"
@@ -70,23 +69,23 @@ type CalculateReportPayload struct {
 }
 
 type DownloadEventPayload struct {
-	System        string                          `json:"system" dc:"system name"`
-	DeviceType    []string                        `json:"deviceType" dc:"device type"`
-	Devices       []*event_center.FarmDeviceEntry `json:"devices" dc:"farmCode and deviceNames"`
-	EventLevels   []int32                         `json:"eventLevels" dc:"event level"`
-	FirstEvent    int32                           `json:"firstEvent" dc:"is first event"`
-	Confirmed     int32                           `json:"confirmed" dc:"is confirmed"`
-	From          time.Time                       `json:"from" dc:"query start time"`
-	To            time.Time                       `json:"to" dc:"query end time"`
-	Page          int64                           `json:"page" dc:"page number"`
-	PageSize      int64                           `json:"pageSize" dc:"page size"`
-	Order         string                          `json:"order" dc:"order"`
-	FilePath      string                          `json:"filePath" dc:"output file path"`
-	TaskStartTime time.Time                       `json:"taskStartTime" dc:"task start time"`
-	EventType     string                          `json:"eventType" dc:"event type"`
-	Username      string                          `json:"username" dc:"user name"`
-	Category      string                          `json:"category" dc:"category"`
-	Columns       []map[string]string             `json:"columns" dc:"columns"`
+	System        string                           `json:"system" dc:"system name"`
+	DeviceType    []string                         `json:"deviceType" dc:"device type"`
+	Devices       []*event_center2.FarmDeviceEntry `json:"devices" dc:"farmCode and deviceNames"`
+	EventLevels   []int32                          `json:"eventLevels" dc:"event level"`
+	FirstEvent    int32                            `json:"firstEvent" dc:"is first event"`
+	Confirmed     int32                            `json:"confirmed" dc:"is confirmed"`
+	From          time.Time                        `json:"from" dc:"query start time"`
+	To            time.Time                        `json:"to" dc:"query end time"`
+	Page          int64                            `json:"page" dc:"page number"`
+	PageSize      int64                            `json:"pageSize" dc:"page size"`
+	Order         string                           `json:"order" dc:"order"`
+	FilePath      string                           `json:"filePath" dc:"output file path"`
+	TaskStartTime time.Time                        `json:"taskStartTime" dc:"task start time"`
+	EventType     string                           `json:"eventType" dc:"event type"`
+	Username      string                           `json:"username" dc:"user name"`
+	Category      string                           `json:"category" dc:"category"`
+	Columns       []map[string]string              `json:"columns" dc:"columns"`
 }
 
 func formatList(list []string) string {
@@ -105,58 +104,38 @@ func formatList(list []string) string {
 	return result
 }
 
-type Statistics struct {
-	Elapsed   float64 `json:"elapsed"`
-	RowsRead  uint64  `json:"rows_read"`
-	BytesRead uint64  `json:"bytes_read"`
-}
-
-type CHDBJsonStruct struct {
-	Meta []struct {
-		Name string `json:"name"`
-		Type string `json:"type"`
-	} `json:"meta"`
-	Data       []map[string]interface{} `json:"data"` // Expecting data as slice of maps
-	Rows       int                      `json:"rows"`
-	Statistics struct {
-		Elapsed   float64 `json:"elapsed"`
-		RowsRead  uint64  `json:"rows_read"`
-		BytesRead uint64  `json:"bytes_read"`
-	} `json:"statistics"`
-}
-type Meta struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-}
-
-func DoSqlProcessJson(data string) []byte {
-	t1 := time.Now()
-	url := taskConfig.ClickHouseURL + "?add_http_cors_header=1&default_format=JSON&max_result_rows=1000&max_result_bytes=10000000&result_overflow_mode=break&"
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
-	if err != nil {
-		ReportLogger.Errorf("Error creating request:", err)
-		return nil
-	}
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
-	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		ReportLogger.Errorf("Error making request:", err)
-		return nil
-	}
-	defer resp.Body.Close()
-	content, _ := io.ReadAll(resp.Body)
-	ReportLogger.Infof("time cost:%f", time.Now().Sub(t1))
-
-	return content
-
-}
+//func DoSqlProcessJson(data string) []byte {
+//	t1 := time.Now()
+//	url := taskConfig.ClickHouseURL + "?add_http_cors_header=1&default_format=JSON&max_result_rows=1000&max_result_bytes=10000000&result_overflow_mode=break&"
+//
+//	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
+//	if err != nil {
+//		ReportLogger.Errorf("Error creating request:", err)
+//		return nil
+//	}
+//	req.Header.Set("Accept", "*/*")
+//	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+//	req.Header.Set("Connection", "keep-alive")
+//	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+//	client := &http.Client{}
+//	resp, err := client.Do(req)
+//	if err != nil {
+//		ReportLogger.Errorf("Error making request:", err)
+//		return nil
+//	}
+//	defer resp.Body.Close()
+//	content, _ := io.ReadAll(resp.Body)
+//	ReportLogger.Infof("time cost:%f", time.Now().Sub(t1))
+//
+//	return content
+//
+//}
 
 func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
+
+	lumberjackLogger, taskLogger := logger.GenerateNewLogger("./task_log/download_report.log", taskConfig.LogMaxSizeMB, taskConfig.LogMaxBackups, taskConfig.LogMaxAgeDays, taskConfig.LogCompress, taskConfig.LogLevel)
+	defer lumberjackLogger.Close()
+
 	//接收任务数据.
 	fileList := make([]string, 0)
 	fileDirectory := filepath.Join("/tmp/", "scheduler_reports", time.Now().Format("20060102150405")+"_"+generateRandomString(8))
@@ -245,8 +224,9 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 							sql = fmt.Sprintf("WITH SourceData AS (\n    SELECT\n        MC006,\n        preTotalGeneration,\n        FaultLossGeneration,\n        OverhaulLossGeneration,\n        MaintainLossGeneration,\n        GridLossGeneration,\n        RemoteLossGeneration,\n        LocalLossGeneration,\n        WeatherLossGeneration,\n        LimitLossGeneration,\n        TheoreticalGeneration,\n        ROW_NUMBER() OVER (ORDER BY time DESC) AS rn_desc,\n        ROW_NUMBER() OVER (ORDER BY time ASC) AS rn_asc\n    FROM file('%s', Parquet)\nWHERE\n time>='%s' and time<'%s' ),\nAggregatedValues AS (\n    SELECT\n        count(MC006) AS Count,\n        MAX(CASE WHEN rn_desc = 1 THEN MC006 END) AS latest_mc006,\n        MAX(CASE WHEN rn_asc = 1 THEN preTotalGeneration END) AS earliest_preTotalGeneration,\n        SUM(FaultLossGeneration) AS sum_fault_loss,\n        SUM(OverhaulLossGeneration) AS sum_overhaul_loss,\n        SUM(MaintainLossGeneration) AS sum_maintain_loss,\n        SUM(GridLossGeneration) AS sum_grid_loss,\n        SUM(RemoteLossGeneration) AS sum_remote_loss,\n        SUM(LocalLossGeneration) AS sum_local_loss,\n        SUM(WeatherLossGeneration) AS sum_weather_loss,\n        SUM(LimitLossGeneration) AS sum_limit_loss,\n        SUM(TheoreticalGeneration) AS sum_theoretical_gen\n    FROM SourceData\n),\nCalculatedMetrics AS (\n    SELECT\n        Count,\n        latest_mc006,\n        earliest_preTotalGeneration,\n        sum_theoretical_gen,\n        (latest_mc006 - earliest_preTotalGeneration) AS actual_generation_delta,\n        (sum_fault_loss + sum_overhaul_loss + sum_maintain_loss + \n         sum_grid_loss + sum_remote_loss + sum_local_loss + \n         sum_weather_loss) / 3600.0 AS total_loss_div_3600,\n        sum_fault_loss / 3600.0 / 10000.0 AS FaultLossGeneration,\n        sum_overhaul_loss / 3600.0 / 10000.0 AS OverhaulLossGeneration,\n        sum_maintain_loss / 3600.0 / 10000.0 AS MaintainLossGeneration,\n        sum_grid_loss / 3600.0 / 10000.0 AS GridLossGeneration,\n        sum_local_loss / 3600.0 / 10000.0 AS LocalLossGeneration,\n        sum_remote_loss / 3600.0 / 10000.0 AS RemoteLossGeneration,\n        sum_weather_loss / 3600.0 / 10000.0 AS WeatherLossGeneration,\n        sum_limit_loss / 3600.0 / 10000.0 AS LimitLossGeneration\n    FROM AggregatedValues\n)\nSELECT\n    Count,\n    (1.0 - (actual_generation_delta / \n            NULLIF(actual_generation_delta + total_loss_div_3600, 0))) * 100.0 AS Discrepancy,\n    (actual_generation_delta / NULLIF(sum_theoretical_gen, 0)) * 3600.0 * 100.0 AS EnergyAvailability,\n    FaultLossGeneration,\n    OverhaulLossGeneration,\n    MaintainLossGeneration,\n    GridLossGeneration,\n    LocalLossGeneration,\n    RemoteLossGeneration,\n    WeatherLossGeneration,\n    LimitLossGeneration\nFROM CalculatedMetrics;", parquetfile, timePoints[i], timePoints[i+1])
 						}
 
-						jsonData := DoSqlProcessJson(sql)
-						var response CHDBJsonStruct
+						//jsonData := DoSqlProcessJson(sql)
+						jsonData, _ := utils.ExecuteCHQueryJSON(taskConfig, sql)
+						var response utils.CHDBJsonStruct
 						err := json.Unmarshal(jsonData, &response)
 						if err != nil {
 							log.Fatalf("Error unmarshaling JSON: %v", err)
@@ -298,8 +278,9 @@ func HandleDownloadReportTask(ctx context.Context, t *asynq.Task) error {
 					//deviceDataList := make([]tools.ReportData, 0)
 
 					sql := fmt.Sprintf("select %s from db_report.%s where DeviceName in %s and Time>='%s' and Time<'%s';", fields, p.ReportType, formatList(values), timePoints[i], timePoints[i+1])
-					jsonData := DoSqlProcessJson(sql)
-					var response CHDBJsonStruct
+					//jsonData := DoSqlProcessJson(sql)
+					jsonData, _ := utils.ExecuteCHQueryJSON(taskConfig, sql)
+					var response utils.CHDBJsonStruct
 					err := json.Unmarshal(jsonData, &response)
 					if err != nil {
 						log.Fatalf("Error unmarshaling JSON: %v", err)
@@ -638,6 +619,9 @@ func ReportDataToCSV(data []map[string]interface{}, columns map[string]string, w
 }
 
 func HandleCalculateReportTask(ctx context.Context, t *asynq.Task) error {
+	lumberjackLogger, taskLogger := logger.GenerateNewLogger("./task_log/calculate_parquet.log", taskConfig.LogMaxSizeMB, taskConfig.LogMaxBackups, taskConfig.LogMaxAgeDays, taskConfig.LogCompress, taskConfig.LogLevel)
+	defer lumberjackLogger.Close()
+
 	//接收任务数据.
 	var p CalculateReportPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
@@ -646,7 +630,7 @@ func HandleCalculateReportTask(ctx context.Context, t *asynq.Task) error {
 	}
 
 	// Now, a single call handles all three report calculations and insertions efficiently.
-	if err := CalculateAndInsertCombinedReport(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
+	if err := utils.CalculateAndInsertCombinedReport(p.FilePath, p.ReportKey, ReportLogger, taskConfig.ClickHouseURL); err != nil {
 		ReportLogger.Errorf("Calculate Combined Report task error: %s", err)
 	}
 	//
@@ -665,6 +649,9 @@ func HandleCalculateReportTask(ctx context.Context, t *asynq.Task) error {
 }
 
 func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
+	lumberjackLogger, taskLogger := logger.GenerateNewLogger("./task_log/download_event.log", taskConfig.LogMaxSizeMB, taskConfig.LogMaxBackups, taskConfig.LogMaxAgeDays, taskConfig.LogCompress, taskConfig.LogLevel)
+	defer lumberjackLogger.Close()
+
 	var p DownloadEventPayload
 	//fmt.Println(t.Payload())
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
@@ -674,11 +661,11 @@ func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
 
 	switch p.EventType {
 	case "HistoricEvents":
-		request := &event_center.Query{
+		request := &event_center2.Query{
 			System:            p.System,
 			Category:          p.Category,
 			Username:          p.Username,
-			FarmDeviceEntries: event_center.ToProtoFarmDeviceEntries(p.Devices),
+			FarmDeviceEntries: event_center2.ToProtoFarmDeviceEntries(p.Devices),
 			FirstEvent:        p.FirstEvent,
 			EventLevels:       p.EventLevels,
 			StartTime:         p.From,
@@ -688,7 +675,7 @@ func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
 			Page:              p.Page,
 			PageSize:          p.PageSize,
 		}
-		events, _, err := event_center.GetEC().GetHistoricalEventsPage(*request)
+		events, _, err := event_center2.GetEC().GetHistoricalEventsPage(*request)
 		if err != nil {
 			taskLogger.Error("查询历史事件失败:", err)
 			return fmt.Errorf("查询历史事件失败: %v: %w", err, asynq.SkipRetry)
@@ -705,11 +692,11 @@ func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
 		}
 
 	case "RealtimeEvents":
-		realtimeEvents := make([]event_center.Event, 0, len(p.Devices)*10)
+		realtimeEvents := make([]event_center2.Event, 0, len(p.Devices)*10)
 		// 遍历每个设备组
 		for _, farmDeviceEntry := range p.Devices {
 			// 构造请求参数
-			request := &event_center.Query{
+			request := &event_center2.Query{
 				System:      p.System,
 				Category:    p.Category,
 				FarmCode:    farmDeviceEntry.FarmCode,
@@ -722,7 +709,7 @@ func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
 			}
 
 			// 调用event_center获取实时事件
-			events, err := event_center.GetEC().GetRealtimeEvents(*request)
+			events, err := event_center2.GetEC().GetRealtimeEvents(*request)
 			if err != nil {
 				taskLogger.Error("查询实时事件失败，farmCode:["+farmDeviceEntry.FarmCode+"]", err)
 				return fmt.Errorf("查询实时事件失败: %v: %w", err, asynq.SkipRetry)
@@ -741,5 +728,57 @@ func HandleDownloadEventTask(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 
+	return nil
+}
+
+func HandleCalculateTBAPBAReportTask(ctx context.Context, t *asynq.Task) error {
+	//接收任务数据.
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("无法获取当前文件路径")
+	}
+
+	// file 可能是相对路径，也可能是绝对路径，取决于编译时的情况。
+	// 为了确保得到绝对路径，我们使用 filepath.Abs()。
+	absPath, err := filepath.Abs(file)
+	if err != nil {
+		panic(err)
+	}
+
+	command := "/usr/local/bin/python3"
+	args := []string{
+		absPath + "/pbatba.py",
+		"--start-time", time.Now().Format("2006-01-02"),
+		"--end-time", time.Now().Format("2006-01-02"),
+		"--farm", "WLTEQ",
+		"--farm-ch", "乌拉特潇源",
+		"--turbines", "001", "002", "003", "004", "005", "006",
+		"--data-dir", "/home/data/parquet/F1241/",
+	}
+	fmt.Println(command)
+	fmt.Println(args)
+
+	//cmd := exec.Command(command, args...)
+	//
+	//// 3. 将子进程的标准输出和标准错误连接到当前程序的标准输出和标准错误
+	//// 这样你就可以实时看到 Python 脚本的打印信息
+	//cmd.Stdout = os.Stdout
+	//cmd.Stderr = os.Stderr
+	//
+	//// 打印将要执行的命令，方便调试
+	//fmt.Println("Executing command:", cmd.String())
+	//
+	//// 4. 执行命令并等待它完成
+	//err := cmd.Run()
+	//
+	//// 5. 检查错误
+	//if err != nil {
+	//	// 如果命令执行失败 (例如，返回了非零的退出码)，err 会不为 nil
+	//	log.Fatalf(" Command finished with error: %v", err)
+	//	return err
+	//}
+
+	fmt.Println("\n Python script executed successfully.")
 	return nil
 }

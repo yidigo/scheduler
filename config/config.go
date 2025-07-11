@@ -12,29 +12,33 @@ import (
 
 // AppConfig 保存应用的所有配置
 type AppConfig struct {
-	RedisAddr             string
-	RedisDB               int
-	RedisPassword         string // 新增 Redis 密码配置
-	ClickHouseURL         string
-	ClickHouseUser        string
-	ClickHousePass        string
-	LogFilePath           string
-	LogMaxSizeMB          int
-	LogMaxBackups         int
-	LogMaxAgeDays         int
-	LogCompress           bool
-	LogLevel              logger.Level // 使用 logger 包中定义的 Level 类型
-	DefaultQueue          string
-	CriticalQueue         string
-	MergeParquetFileQueue string
-	CalculateReportQueue  string
-	SecondDownloadQueue   string
-	ReportQueues          map[string]string // 将原 Queues map 中的报表队列也纳入配置
-	EventQueues           map[string]string // 将原 Queues map 中的报表队列也纳入配置
-	AsynqConcurrency      int
-	HTTPClientTimeout     time.Duration
-	SecondParquetPath     string
-	EventCenterConfig     EventCenterConfig
+	RedisAddr                       string
+	RedisDB                         int
+	RedisPassword                   string // 新增 Redis 密码配置
+	ClickHouseURL                   string
+	ClickHouseUser                  string
+	ClickHousePass                  string
+	LogFilePath                     string
+	LogMaxSizeMB                    int
+	LogMaxBackups                   int
+	LogMaxAgeDays                   int
+	LogCompress                     bool
+	LogLevel                        logger.Level // 使用 logger 包中定义的 Level 类型
+	DefaultQueue                    string
+	CriticalQueue                   string
+	MergeParquetFileQueue           string
+	CalculateReportQueue            string
+	SecondDownloadQueue             string
+	SummaryReportQueue              string
+	TurbineAvailabilityMetricsQueue string
+	EfficiencyMetricsQueue          string
+	HistoricEventsQueue             string
+	RealtimeEventsQueue             string
+
+	AsynqConcurrency  int
+	HTTPClientTimeout time.Duration
+	SecondParquetPath string
+	EventCenterConfig EventCenterConfig
 }
 
 type EventCenterConfig struct {
@@ -73,33 +77,28 @@ func loadConfig() (*AppConfig, error) {
 		RedisDB:       redisDB,
 		RedisPassword: getEnv("REDIS_PASSWORD", ""), // 默认为空密码
 		//ClickHouseURL: getEnv("CLICKHOUSE_URL", "http://10.162.74.33:59011/"),
-		ClickHouseURL:         getEnv("CLICKHOUSE_URL", "http://127.0.0.1:59011/"),
-		ClickHouseUser:        getEnv("CLICKHOUSE_USER", "default"),
-		ClickHousePass:        getEnv("CLICKHOUSE_PASS", ""),
-		LogFilePath:           getEnv("LOG_FILE_PATH", "./app_rotated.log"),
-		LogMaxSizeMB:          logMaxSize,
-		LogMaxBackups:         logMaxBackups,
-		LogMaxAgeDays:         logMaxAge,
-		LogCompress:           logCompress,
-		LogLevel:              logLevel,
-		DefaultQueue:          getEnv("QUEUE_DEFAULT", "default"),
-		CriticalQueue:         getEnv("QUEUE_CRITICAL", "critical"),
-		MergeParquetFileQueue: getEnv("QUEUE_MERGE_PARQUET_FILE", "MergeParquetFile"),
-		CalculateReportQueue:  getEnv("QUEUE_CALCULATE_REPORT", "CalculateReport"),
-		SecondDownloadQueue:   getEnv("QUEUE_SECOND_DOWNLOAD", "SecondDownload"),
-
-		ReportQueues: map[string]string{ // 示例，可以根据需要扩展
-			"SummaryReport":              getEnv("QUEUE_SUMMARY_REPORT", "SummaryReport"),
-			"TurbineAvailabilityMetrics": getEnv("QUEUE_TURBINE_AVAILABILITY_METRICS", "TurbineAvailabilityMetrics"),
-			"EfficiencyMetrics":          getEnv("QUEUE_EFFICIENCY_METRICS", "EfficiencyMetrics"),
-		},
-		EventQueues: map[string]string{ // 示例，可以根据需要扩展
-			"HistoricEvents": getEnv("QUEUE_HISTORIC_EVENTS", "HistoricEvents"),
-			"RealtimeEvents": getEnv("QUEUE_REALTIME_EVENTS", "RealtimeEvents"),
-		},
-		AsynqConcurrency:  asynqConcurrency,
-		HTTPClientTimeout: time.Duration(httpClientTimeoutSec) * time.Second,
-		SecondParquetPath: getEnv("SECOND_PARQUET_PATH", "/home/data/parquet/"),
+		ClickHouseURL:                   getEnv("CLICKHOUSE_URL", "http://127.0.0.1:59011/"),
+		ClickHouseUser:                  getEnv("CLICKHOUSE_USER", "default"),
+		ClickHousePass:                  getEnv("CLICKHOUSE_PASS", ""),
+		LogFilePath:                     getEnv("LOG_FILE_PATH", "./log/app_rotated.log"),
+		LogMaxSizeMB:                    logMaxSize,
+		LogMaxBackups:                   logMaxBackups,
+		LogMaxAgeDays:                   logMaxAge,
+		LogCompress:                     logCompress,
+		LogLevel:                        logLevel,
+		DefaultQueue:                    getEnv("QUEUE_DEFAULT", "default"),
+		CriticalQueue:                   getEnv("QUEUE_CRITICAL", "critical"),
+		MergeParquetFileQueue:           getEnv("QUEUE_MERGE_PARQUET_FILE", "MergeParquetFile"),
+		CalculateReportQueue:            getEnv("QUEUE_CALCULATE_REPORT", "CalculateReport"),
+		SecondDownloadQueue:             getEnv("QUEUE_SECOND_DOWNLOAD", "SecondDownload"),
+		SummaryReportQueue:              getEnv("QUEUE_SUMMARY_REPORT", "SummaryReport"),
+		TurbineAvailabilityMetricsQueue: getEnv("QUEUE_TURBINE_AVAILABILITY_METRICS", "TurbineAvailabilityMetrics"),
+		EfficiencyMetricsQueue:          getEnv("QUEUE_EFFICIENCY_METRICS", "EfficiencyMetrics"),
+		HistoricEventsQueue:             getEnv("QUEUE_HISTORIC_EVENTS", "HistoricEvents"),
+		RealtimeEventsQueue:             getEnv("QUEUE_REALTIME_EVENTS", "RealtimeEvents"),
+		AsynqConcurrency:                asynqConcurrency,
+		HTTPClientTimeout:               time.Duration(httpClientTimeoutSec) * time.Second,
+		SecondParquetPath:               getEnv("SECOND_PARQUET_PATH", "/home/data/parquet/"),
 		EventCenterConfig: struct {
 			Addr     string
 			Username string

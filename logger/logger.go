@@ -3,6 +3,7 @@ package logger
 import (
 	"encoding/json"
 	"fmt"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"log" // 使用标准库 log 进行 FATAL 级别处理和内部错误
 	"os"
@@ -346,4 +347,24 @@ func StringToLevel(levelStr string) (Level, error) {
 	default:
 		return LevelInfo, fmt.Errorf("未知的日志级别: %s", levelStr)
 	}
+}
+
+func GenerateNewLogger(LogFilePath string, LogMaxSizeMB int, LogMaxBackups int, LogMaxAgeDays int, LogCompress bool, LogLevel Level) (*lumberjack.Logger, *Logger) {
+	var AppLogger *Logger
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   LogFilePath,
+		MaxSize:    LogMaxSizeMB,
+		MaxBackups: LogMaxBackups,
+		MaxAge:     LogMaxAgeDays,
+		Compress:   LogCompress,
+	}
+	// defer lumberjackLogger.Close() // Close 将在应用结束时处理
+
+	AppLogger = New(
+		WithOutput(lumberjackLogger),
+		WithLevel(LogLevel), // 使用配置中的日志级别
+		WithCaller(true),
+	)
+
+	return lumberjackLogger, AppLogger
 }

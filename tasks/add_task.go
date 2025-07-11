@@ -87,3 +87,34 @@ func DownloadReportTaskAdd(dp DownloadReportPayload) {
 	}
 	log.Printf("enqueued task: id=%s queue=%s", info.ID, info.Queue)
 }
+
+func PBATBATaskAdd() {
+	scheduler := asynq.NewScheduler(
+		asynq.RedisClientOpt{Addr: taskConfig.RedisAddr,
+			DB: 8},
+		&asynq.SchedulerOpts{},
+	)
+
+	// 2. 准备一个要被周期性调度的任务
+	task, err := asynq.NewTask("report:download", nil), asynq.Retention(24*time.Hour)
+	if err != nil {
+		log.Fatalf("无法创建任务: %v", err)
+	}
+
+	// 3. 注册周期性任务
+	entryID, err1 := scheduler.Register("1 1 * * *", task)
+	if err1 != nil {
+		log.Fatalf("无法注册周期性任务: %v", err)
+	}
+	log.Printf("成功注册周期性任务，条目ID: %s", entryID)
+
+	// 你可以注册多个周期性任务
+	// task2, _ := tasks.NewEmailReportTask(456)
+	// scheduler.Register("0 2 * * *", task2) // 每天凌晨2点执行
+
+	// 4. 运行 Scheduler
+	// Run() 会阻塞，直到程序收到停止信号
+	if err := scheduler.Run(); err != nil {
+		log.Fatalf("Scheduler 运行失败: %v", err)
+	}
+}

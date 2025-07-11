@@ -1,4 +1,4 @@
-package tasks
+package utils
 
 import (
 	"bytes"
@@ -195,108 +195,108 @@ func fetchAndPrepareReportData[T any](
 	return reportItem, nil
 }
 
-func CalculateSummaryData(filePath, deviceName string, logger *logger.Logger, chdburl string) error {
-	buildSQL := func(fp string) string {
-		// Note: Ensure filePath is properly escaped if it could contain special characters,
-		// though file paths are usually less problematic than other user inputs.
-		// ClickHouse's file function should handle typical paths.
-		return fmt.Sprintf("SELECT\n    COUNT(MC082) AS Count, \n    SUM(IsEffectWind) AS EffectWindHours,\n    AVG(MC004) AS Met1sWSpdAvg,\n    MAX(MC004) AS Met1sWSpdMax,\n    MIN(MC004) AS Met1sWSpdMin,\n    AVG(MC082) AS Met30sWSpdAvg,\n    MAX(MC082) AS Met30sWSpdMax,\n    MIN(MC082) AS Met30sWSpdMin,\n    AVG(MC083) AS Met600sWSpdAvg,\n    MAX(MC083) AS Met600sWSpdMax,\n    MIN(MC083) AS Met600sWSpdMin,\n    AVG(MC093) AS MetAirDensityAvg,\n\n    (MAX(MC006) - MIN(MC006)) / ANY_VALUE(RatedPower) * 3600 AS EquivalentHours, \n    ANY_VALUE(RatedPower) AS RatedPowerData,\n    MIN(MC006) AS PreTotalGenerationFirst,\n    MAX(MC006) AS GriActiveEnergyDelLast,\n    (MAX(MC006) - MIN(MC006)) AS GriActiveEnergyDelTotal,\n    SUM(TheoreticalGeneration) AS TheoreticalGeneration,\n    MIN(MC062) AS PreTotalEleConsumptionFirst,\n    MAX(MC062) AS GriActiveEnergyRcvLast,\n    (MAX(MC062) - MIN(MC062)) AS GriActiveEnergyRcvSection,\n    AVG(MC061) AS GriActivePowerTotalAvg,\n    MAX(MC061) AS GriActivePowerTotalMax,\n    MIN(MC061) AS GriActivePowerTotalMin,\n    AVG(MD002) AS GriReactivePowerTotalAvg,\n    MAX(MD002) AS GriReactivePowerTotalMax,\n    MIN(MD002) AS GriReactivePowerTotalMin,\n    AVG(MC085) AS CnvGenPower30sAvg,\n    MAX(MC085) AS CnvGenPower30sMax,\n    MIN(MC085) AS CnvGenPower30sMin,\n    AVG(MC086) AS CnvGenPower600sAvg,\n    MAX(MC086) AS CnvGenPower600sMax,\n    MIN(MC086) AS CnvGenPower600sMin,\n    \n    COUNT(CASE WHEN MD001 >= RatedPower THEN 1 END) AS FullLoadDurationDay, \n    SUM(Generation) / 10000.0 AS GriActiveEnergyDelUnit,\n    SUM(Consumption) / 10000.0 AS GriActiveEnergyRcvUnit,\n\n\n    AVG(MC015) AS MetTmpAvg,\n    MAX(MC015) AS MetTmpMax,\n    MIN(MC015) AS MetTmpMin,\n    AVG(MC014) AS NacTmpAvg,\n    MAX(MC014) AS NacTmpMax,\n    MIN(MC014) AS NacTmpMin,\n    AVG(MC091) AS TowCbtTmpAvg,\n    MAX(MC091) AS TowCbtTmpMax,\n    MIN(MC091) AS TowCbtTmpMin,\n    SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) AS YawAcwHours,\n    SUM(CASE WHEN YawCcwTimes = 1 THEN 1 ELSE 0 END) AS YawAcwTimes, \n    SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END) AS YawCwHours,\n    SUM(YawCwTimes) AS YawCwTimesSum, \n    (SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) + SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END)) AS YawHoursTotal,\n    SUM(CASE WHEN MA2353 = 1 THEN 1 ELSE 0 END) AS GenReactQLimitStateDuration,\n    SUM(GenReactQLimitStateTimes) AS GenReactQLimitStateTimesSum\nFROM\n    file('%s', Parquet);", fp)
-	}
-
-	setter := func(report *SummaryData, devName string, rTime time.Time) {
-		report.DeviceName = devName
-		report.Time = rTime
-	}
-
-	report, err := fetchAndPrepareReportData[SummaryData](filePath, deviceName, chdburl, logger, buildSQL, setter)
-	if err != nil {
-		return fmt.Errorf("failed to fetch and prepare summary data for %s: %w", deviceName, err)
-	}
-	if report == nil {
-		logger.Infof("No summary data to insert for file %s, device %s", filePath, deviceName)
-		return nil
-	}
-
-	// Prepare payload for JSONEachRow, especially formatting time.Time
-	// The SummaryData struct should have `json` tags for all fields matching ClickHouse column names.
-	// Time field needs special handling for JSON marshaling if it's time.Time.
-	// Best to create a map or a dedicated "forInsert" struct.
-	//payload := summaryDataToInsertPayload(*report)
-	//
-	//if err := doCHInsert(payload, "db_report.SummaryReport", chdburl, logger); err != nil {
-	//	return fmt.Errorf("error inserting summary data for %s: %w", deviceName, err)
-	//}
-	if err := insertSummaryData(*report, chdburl, logger); err != nil {
-		return fmt.Errorf("error inserting summary data for %s: %w", deviceName, err)
-	}
-
-	logger.Debugf("Successfully inserted summary report for %s", deviceName)
-	return nil
-}
-
-func CalculateTurbineAvailabilityMetrics(filePath, deviceName string, logger *logger.Logger, chdburl string) error {
-	buildSQL := func(fp string) string {
-		return fmt.Sprintf("WITH AggregatedData AS (\n    SELECT\n        SUM(CASE WHEN MC143 = 40 THEN 1 ELSE 0 END) AS FaultShutdownDuration,\n        SUM(CASE WHEN MC143 = 50 THEN 1 ELSE 0 END) AS OverhaulDuration,\n        SUM(CASE WHEN MC143 = 60 THEN 1 ELSE 0 END) AS MaintenanceDuration, \n        SUM(CASE WHEN MC143 = 70 THEN 1 ELSE 0 END) AS GridShutdownDuration,\n        SUM(CASE WHEN MC143 = 81 THEN 1 ELSE 0 END) AS LocalShutdownDuration,\n        SUM(CASE WHEN MC143 = 80 THEN 1 ELSE 0 END) AS RemoteShutdownDuration,\n        SUM(CASE WHEN MC143 = 90 THEN 1 ELSE 0 END) AS WeatherShutdownDuration,\n        SUM(CASE WHEN MC143 = 110 THEN 1 ELSE 0 END) AS LimitPowerDuration,\n        SUM(CASE WHEN MC143 = 111 THEN 1 ELSE 0 END) AS LimitShutdownDuration,\n        SUM(CASE WHEN MC143 = 100 THEN 1 ELSE 0 END) AS StandbyDuration,\n        SUM(CASE WHEN MC143 = 120 THEN 1 ELSE 0 END) AS NormalGenerationDuration,\n        SUM(FaultShutdownTimes) AS FaultShutdownTimes,\n        SUM(OverhaulTimes) AS OverhaulTimes,\n        SUM(MaintenanceTimes) AS MaintenanceTimes,\n        SUM(GridShutdownTimes) AS GridShutdownTimes,\n        SUM(LocalShutdownTimes) AS LocalShutdownTimes,\n        SUM(RemoteShutdownTimes) AS RemoteShutdownTimes,\n        SUM(WeatherShutdownTimes) AS WeatherShutdownTimes,\n        SUM(LimitPowerTimes) AS LimitPowerTimes,\n        SUM(LimitShutdownTimes) AS LimitShutdownTimes,\n        SUM(StandbyTimes) AS StandbyTimes,\n        SUM(NormalGenerationTimes) AS NormalGenerationTimes,\n        SUM(InterruptionTimes) AS InterruptionTimes,\n        COUNT(*) AS Count\n    FROM file('%s', Parquet)\n)\nSELECT\n    FaultShutdownDuration,\n    OverhaulDuration,\n    MaintenanceDuration,\n    GridShutdownDuration,\n    LocalShutdownDuration,\n    RemoteShutdownDuration,\n    WeatherShutdownDuration,\n    LimitPowerDuration,\n    LimitShutdownDuration,\n    StandbyDuration,\n    NormalGenerationDuration,\n    FaultShutdownTimes,\n    OverhaulTimes,\n    MaintenanceTimes,\n    GridShutdownTimes,\n    LocalShutdownTimes,\n    RemoteShutdownTimes,\n    WeatherShutdownTimes,\n    LimitPowerTimes,\n    LimitShutdownTimes,\n    StandbyTimes,\n    NormalGenerationTimes,\n    InterruptionTimes,\n    Count,\n    (MaintenanceDuration+GridShutdownDuration +LocalShutdownDuration +RemoteShutdownDuration +WeatherShutdownDuration +LimitPowerDuration +LimitShutdownDuration +StandbyDuration +NormalGenerationDuration) as Availabletime,\n    (FaultShutdownDuration + OverhaulDuration) as UnAvailabletime,\n    (1.0 - (FaultShutdownDuration + OverhaulDuration) * 1.0 / NULLIF(Count, 0)) AS Availability,\n    (600 - Count) AS InterruptionDuration_Calculated, \n    ((Count - FaultShutdownDuration) * 1.0 / NULLIF(FaultShutdownTimes, 0)) AS MTBFDuration,\n    (FaultShutdownDuration * 1.0 / NULLIF(FaultShutdownTimes, 0)) AS MTTRDuration\nFROM\n    AggregatedData;", fp)
-	}
-	setter := func(report *TurbineAvailabilityMetrics, devName string, rTime time.Time) {
-		report.DeviceName = devName
-		report.Time = rTime
-	}
-
-	report, err := fetchAndPrepareReportData[TurbineAvailabilityMetrics](filePath, deviceName, chdburl, logger, buildSQL, setter)
-	if err != nil {
-		return fmt.Errorf("failed to fetch/prepare turbine availability for %s: %w", deviceName, err)
-	}
-	if report == nil {
-		logger.Infof("No turbine availability data to insert for file %s, device %s", filePath, deviceName)
-		return nil
-	}
-
-	//payload := turbineAvailabilityToInsertPayload(*report)
-	//if err := doCHInsert(payload, "db_report.TurbineAvailabilityMetrics", chdburl, logger); err != nil {
-	//	return fmt.Errorf("error inserting turbine availability for %s: %w", deviceName, err)
-	//}
-
-	if err := insertTurbineAvailabilityMetrics(*report, chdburl, logger); err != nil {
-		return fmt.Errorf("error inserting turbine availability report for %s: %w", deviceName, err)
-	}
-
-	logger.Debugf("Successfully inserted turbine availability report for %s", deviceName)
-
-	//logger.Debugf("Successfully inserted turbine availability report for %s", deviceName)
-	return nil
-}
-
-func CalculateEfficiencyMetrics(filePath, deviceName string, logger *logger.Logger, chdburl string) error {
-	buildSQL := func(fp string) string {
-		return fmt.Sprintf("WITH SourceData AS (\n    SELECT\n        MC006,\n        preTotalGeneration,\n        FaultLossGeneration,\n        OverhaulLossGeneration,\n        MaintainLossGeneration,\n        GridLossGeneration,\n        RemoteLossGeneration,\n        LocalLossGeneration,\n        WeatherLossGeneration,\n        LimitLossGeneration,\n        TheoreticalGeneration,\n        ROW_NUMBER() OVER (ORDER BY time DESC) AS rn_desc,\n        ROW_NUMBER() OVER (ORDER BY time ASC) AS rn_asc\n    FROM file('%s', Parquet)\n),\nAggregatedValues AS (\n    SELECT\n        count(MC006) AS Count,\n        MAX(CASE WHEN rn_desc = 1 THEN MC006 END) AS latest_mc006,\n        MAX(CASE WHEN rn_asc = 1 THEN preTotalGeneration END) AS earliest_preTotalGeneration,\n        SUM(FaultLossGeneration) AS sum_fault_loss,\n        SUM(OverhaulLossGeneration) AS sum_overhaul_loss,\n        SUM(MaintainLossGeneration) AS sum_maintain_loss,\n        SUM(GridLossGeneration) AS sum_grid_loss,\n        SUM(RemoteLossGeneration) AS sum_remote_loss,\n        SUM(LocalLossGeneration) AS sum_local_loss,\n        SUM(WeatherLossGeneration) AS sum_weather_loss,\n        SUM(LimitLossGeneration) AS sum_limit_loss,\n        SUM(TheoreticalGeneration) AS sum_theoretical_gen\n    FROM SourceData\n),\nCalculatedMetrics AS (\n    SELECT\n        Count,\n        latest_mc006,\n        earliest_preTotalGeneration,\n        sum_theoretical_gen,\n        (latest_mc006 - earliest_preTotalGeneration) AS actual_generation_delta,\n        (sum_fault_loss + sum_overhaul_loss + sum_maintain_loss + \n         sum_grid_loss + sum_remote_loss + sum_local_loss + \n         sum_weather_loss) / 3600.0 AS total_loss_div_3600,\n        sum_fault_loss / 3600.0 / 10000.0 AS FaultLossGeneration,\n        sum_overhaul_loss / 3600.0 / 10000.0 AS OverhaulLossGeneration,\n        sum_maintain_loss / 3600.0 / 10000.0 AS MaintainLossGeneration,\n        sum_grid_loss / 3600.0 / 10000.0 AS GridLossGeneration,\n        sum_local_loss / 3600.0 / 10000.0 AS LocalLossGeneration,\n        sum_remote_loss / 3600.0 / 10000.0 AS RemoteLossGeneration,\n        sum_weather_loss / 3600.0 / 10000.0 AS WeatherLossGeneration,\n        sum_limit_loss / 3600.0 / 10000.0 AS LimitLossGeneration\n    FROM AggregatedValues\n)\nSELECT\n    Count,\n    (1.0 - (actual_generation_delta / \n            NULLIF(actual_generation_delta + total_loss_div_3600, 0))) * 100.0 AS Discrepancy,\n    (actual_generation_delta / NULLIF(sum_theoretical_gen, 0)) * 3600.0 * 100.0 AS EnergyAvailability,\n    FaultLossGeneration,\n    OverhaulLossGeneration,\n    MaintainLossGeneration,\n    GridLossGeneration,\n    LocalLossGeneration,\n    RemoteLossGeneration,\n    WeatherLossGeneration,\n    LimitLossGeneration\nFROM CalculatedMetrics;", fp)
-	}
-	setter := func(report *EfficiencyMetrics, devName string, rTime time.Time) {
-		report.DeviceName = devName
-		report.Time = rTime
-	}
-
-	report, err := fetchAndPrepareReportData[EfficiencyMetrics](filePath, deviceName, chdburl, logger, buildSQL, setter)
-	if err != nil {
-		return fmt.Errorf("failed to fetch/prepare efficiency metrics for %s: %w", deviceName, err)
-	}
-	if report == nil {
-		logger.Infof("No efficiency metrics data to insert for file %s, device %s", filePath, deviceName)
-		return nil
-	}
-
-	//payload := efficiencyMetricsToInsertPayload(*report)
-	//if err := doCHInsert(payload, "db_report.EfficiencyMetrics", chdburl, logger); err != nil {
-	//	return fmt.Errorf("error inserting efficiency metrics for %s: %w", deviceName, err)
-	//}
-
-	if err := insertEfficiencyMetrics(*report, chdburl, logger); err != nil {
-		return fmt.Errorf("error inserting efficiency metrics report for %s: %w", deviceName, err)
-	}
-
-	logger.Debugf("Successfully inserted efficiency metrics report for %s", deviceName)
-	return nil
-}
+//func CalculateSummaryData(filePath, deviceName string, logger *logger.Logger, chdburl string) error {
+//	buildSQL := func(fp string) string {
+//		// Note: Ensure filePath is properly escaped if it could contain special characters,
+//		// though file paths are usually less problematic than other user inputs.
+//		// ClickHouse's file function should handle typical paths.
+//		return fmt.Sprintf("SELECT\n    COUNT(MC082) AS Count, \n    SUM(IsEffectWind) AS EffectWindHours,\n    AVG(MC004) AS Met1sWSpdAvg,\n    MAX(MC004) AS Met1sWSpdMax,\n    MIN(MC004) AS Met1sWSpdMin,\n    AVG(MC082) AS Met30sWSpdAvg,\n    MAX(MC082) AS Met30sWSpdMax,\n    MIN(MC082) AS Met30sWSpdMin,\n    AVG(MC083) AS Met600sWSpdAvg,\n    MAX(MC083) AS Met600sWSpdMax,\n    MIN(MC083) AS Met600sWSpdMin,\n    AVG(MC093) AS MetAirDensityAvg,\n\n    (MAX(MC006) - MIN(MC006)) / ANY_VALUE(RatedPower) * 3600 AS EquivalentHours, \n    ANY_VALUE(RatedPower) AS RatedPowerData,\n    MIN(MC006) AS PreTotalGenerationFirst,\n    MAX(MC006) AS GriActiveEnergyDelLast,\n    (MAX(MC006) - MIN(MC006)) AS GriActiveEnergyDelTotal,\n    SUM(TheoreticalGeneration) AS TheoreticalGeneration,\n    MIN(MC062) AS PreTotalEleConsumptionFirst,\n    MAX(MC062) AS GriActiveEnergyRcvLast,\n    (MAX(MC062) - MIN(MC062)) AS GriActiveEnergyRcvSection,\n    AVG(MC061) AS GriActivePowerTotalAvg,\n    MAX(MC061) AS GriActivePowerTotalMax,\n    MIN(MC061) AS GriActivePowerTotalMin,\n    AVG(MD002) AS GriReactivePowerTotalAvg,\n    MAX(MD002) AS GriReactivePowerTotalMax,\n    MIN(MD002) AS GriReactivePowerTotalMin,\n    AVG(MC085) AS CnvGenPower30sAvg,\n    MAX(MC085) AS CnvGenPower30sMax,\n    MIN(MC085) AS CnvGenPower30sMin,\n    AVG(MC086) AS CnvGenPower600sAvg,\n    MAX(MC086) AS CnvGenPower600sMax,\n    MIN(MC086) AS CnvGenPower600sMin,\n    \n    COUNT(CASE WHEN MD001 >= RatedPower THEN 1 END) AS FullLoadDurationDay, \n    SUM(Generation) / 10000.0 AS GriActiveEnergyDelUnit,\n    SUM(Consumption) / 10000.0 AS GriActiveEnergyRcvUnit,\n\n\n    AVG(MC015) AS MetTmpAvg,\n    MAX(MC015) AS MetTmpMax,\n    MIN(MC015) AS MetTmpMin,\n    AVG(MC014) AS NacTmpAvg,\n    MAX(MC014) AS NacTmpMax,\n    MIN(MC014) AS NacTmpMin,\n    AVG(MC091) AS TowCbtTmpAvg,\n    MAX(MC091) AS TowCbtTmpMax,\n    MIN(MC091) AS TowCbtTmpMin,\n    SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) AS YawAcwHours,\n    SUM(CASE WHEN YawCcwTimes = 1 THEN 1 ELSE 0 END) AS YawAcwTimes, \n    SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END) AS YawCwHours,\n    SUM(YawCwTimes) AS YawCwTimesSum, \n    (SUM(CASE WHEN MA022 = 1 THEN 1 ELSE 0 END) + SUM(CASE WHEN MA021 = 1 THEN 1 ELSE 0 END)) AS YawHoursTotal,\n    SUM(CASE WHEN MA2353 = 1 THEN 1 ELSE 0 END) AS GenReactQLimitStateDuration,\n    SUM(GenReactQLimitStateTimes) AS GenReactQLimitStateTimesSum\nFROM\n    file('%s', Parquet);", fp)
+//	}
+//
+//	setter := func(report *SummaryData, devName string, rTime time.Time) {
+//		report.DeviceName = devName
+//		report.Time = rTime
+//	}
+//
+//	report, err := fetchAndPrepareReportData[SummaryData](filePath, deviceName, chdburl, logger, buildSQL, setter)
+//	if err != nil {
+//		return fmt.Errorf("failed to fetch and prepare summary data for %s: %w", deviceName, err)
+//	}
+//	if report == nil {
+//		logger.Infof("No summary data to insert for file %s, device %s", filePath, deviceName)
+//		return nil
+//	}
+//
+//	// Prepare payload for JSONEachRow, especially formatting time.Time
+//	// The SummaryData struct should have `json` tags for all fields matching ClickHouse column names.
+//	// Time field needs special handling for JSON marshaling if it's time.Time.
+//	// Best to create a map or a dedicated "forInsert" struct.
+//	//payload := summaryDataToInsertPayload(*report)
+//	//
+//	//if err := doCHInsert(payload, "db_report.SummaryReport", chdburl, logger); err != nil {
+//	//	return fmt.Errorf("error inserting summary data for %s: %w", deviceName, err)
+//	//}
+//	if err := insertSummaryData(*report, chdburl, logger); err != nil {
+//		return fmt.Errorf("error inserting summary data for %s: %w", deviceName, err)
+//	}
+//
+//	logger.Debugf("Successfully inserted summary report for %s", deviceName)
+//	return nil
+//}
+//
+//func CalculateTurbineAvailabilityMetrics(filePath, deviceName string, logger *logger.Logger, chdburl string) error {
+//	buildSQL := func(fp string) string {
+//		return fmt.Sprintf("WITH AggregatedData AS (\n    SELECT\n        SUM(CASE WHEN MC143 = 40 THEN 1 ELSE 0 END) AS FaultShutdownDuration,\n        SUM(CASE WHEN MC143 = 50 THEN 1 ELSE 0 END) AS OverhaulDuration,\n        SUM(CASE WHEN MC143 = 60 THEN 1 ELSE 0 END) AS MaintenanceDuration, \n        SUM(CASE WHEN MC143 = 70 THEN 1 ELSE 0 END) AS GridShutdownDuration,\n        SUM(CASE WHEN MC143 = 81 THEN 1 ELSE 0 END) AS LocalShutdownDuration,\n        SUM(CASE WHEN MC143 = 80 THEN 1 ELSE 0 END) AS RemoteShutdownDuration,\n        SUM(CASE WHEN MC143 = 90 THEN 1 ELSE 0 END) AS WeatherShutdownDuration,\n        SUM(CASE WHEN MC143 = 110 THEN 1 ELSE 0 END) AS LimitPowerDuration,\n        SUM(CASE WHEN MC143 = 111 THEN 1 ELSE 0 END) AS LimitShutdownDuration,\n        SUM(CASE WHEN MC143 = 100 THEN 1 ELSE 0 END) AS StandbyDuration,\n        SUM(CASE WHEN MC143 = 120 THEN 1 ELSE 0 END) AS NormalGenerationDuration,\n        SUM(FaultShutdownTimes) AS FaultShutdownTimes,\n        SUM(OverhaulTimes) AS OverhaulTimes,\n        SUM(MaintenanceTimes) AS MaintenanceTimes,\n        SUM(GridShutdownTimes) AS GridShutdownTimes,\n        SUM(LocalShutdownTimes) AS LocalShutdownTimes,\n        SUM(RemoteShutdownTimes) AS RemoteShutdownTimes,\n        SUM(WeatherShutdownTimes) AS WeatherShutdownTimes,\n        SUM(LimitPowerTimes) AS LimitPowerTimes,\n        SUM(LimitShutdownTimes) AS LimitShutdownTimes,\n        SUM(StandbyTimes) AS StandbyTimes,\n        SUM(NormalGenerationTimes) AS NormalGenerationTimes,\n        SUM(InterruptionTimes) AS InterruptionTimes,\n        COUNT(*) AS Count\n    FROM file('%s', Parquet)\n)\nSELECT\n    FaultShutdownDuration,\n    OverhaulDuration,\n    MaintenanceDuration,\n    GridShutdownDuration,\n    LocalShutdownDuration,\n    RemoteShutdownDuration,\n    WeatherShutdownDuration,\n    LimitPowerDuration,\n    LimitShutdownDuration,\n    StandbyDuration,\n    NormalGenerationDuration,\n    FaultShutdownTimes,\n    OverhaulTimes,\n    MaintenanceTimes,\n    GridShutdownTimes,\n    LocalShutdownTimes,\n    RemoteShutdownTimes,\n    WeatherShutdownTimes,\n    LimitPowerTimes,\n    LimitShutdownTimes,\n    StandbyTimes,\n    NormalGenerationTimes,\n    InterruptionTimes,\n    Count,\n    (MaintenanceDuration+GridShutdownDuration +LocalShutdownDuration +RemoteShutdownDuration +WeatherShutdownDuration +LimitPowerDuration +LimitShutdownDuration +StandbyDuration +NormalGenerationDuration) as Availabletime,\n    (FaultShutdownDuration + OverhaulDuration) as UnAvailabletime,\n    (1.0 - (FaultShutdownDuration + OverhaulDuration) * 1.0 / NULLIF(Count, 0)) AS Availability,\n    (600 - Count) AS InterruptionDuration_Calculated, \n    ((Count - FaultShutdownDuration) * 1.0 / NULLIF(FaultShutdownTimes, 0)) AS MTBFDuration,\n    (FaultShutdownDuration * 1.0 / NULLIF(FaultShutdownTimes, 0)) AS MTTRDuration\nFROM\n    AggregatedData;", fp)
+//	}
+//	setter := func(report *TurbineAvailabilityMetrics, devName string, rTime time.Time) {
+//		report.DeviceName = devName
+//		report.Time = rTime
+//	}
+//
+//	report, err := fetchAndPrepareReportData[TurbineAvailabilityMetrics](filePath, deviceName, chdburl, logger, buildSQL, setter)
+//	if err != nil {
+//		return fmt.Errorf("failed to fetch/prepare turbine availability for %s: %w", deviceName, err)
+//	}
+//	if report == nil {
+//		logger.Infof("No turbine availability data to insert for file %s, device %s", filePath, deviceName)
+//		return nil
+//	}
+//
+//	//payload := turbineAvailabilityToInsertPayload(*report)
+//	//if err := doCHInsert(payload, "db_report.TurbineAvailabilityMetrics", chdburl, logger); err != nil {
+//	//	return fmt.Errorf("error inserting turbine availability for %s: %w", deviceName, err)
+//	//}
+//
+//	if err := insertTurbineAvailabilityMetrics(*report, chdburl, logger); err != nil {
+//		return fmt.Errorf("error inserting turbine availability report for %s: %w", deviceName, err)
+//	}
+//
+//	logger.Debugf("Successfully inserted turbine availability report for %s", deviceName)
+//
+//	//logger.Debugf("Successfully inserted turbine availability report for %s", deviceName)
+//	return nil
+//}
+//
+//func CalculateEfficiencyMetrics(filePath, deviceName string, logger *logger.Logger, chdburl string) error {
+//	buildSQL := func(fp string) string {
+//		return fmt.Sprintf("WITH SourceData AS (\n    SELECT\n        MC006,\n        preTotalGeneration,\n        FaultLossGeneration,\n        OverhaulLossGeneration,\n        MaintainLossGeneration,\n        GridLossGeneration,\n        RemoteLossGeneration,\n        LocalLossGeneration,\n        WeatherLossGeneration,\n        LimitLossGeneration,\n        TheoreticalGeneration,\n        ROW_NUMBER() OVER (ORDER BY time DESC) AS rn_desc,\n        ROW_NUMBER() OVER (ORDER BY time ASC) AS rn_asc\n    FROM file('%s', Parquet)\n),\nAggregatedValues AS (\n    SELECT\n        count(MC006) AS Count,\n        MAX(CASE WHEN rn_desc = 1 THEN MC006 END) AS latest_mc006,\n        MAX(CASE WHEN rn_asc = 1 THEN preTotalGeneration END) AS earliest_preTotalGeneration,\n        SUM(FaultLossGeneration) AS sum_fault_loss,\n        SUM(OverhaulLossGeneration) AS sum_overhaul_loss,\n        SUM(MaintainLossGeneration) AS sum_maintain_loss,\n        SUM(GridLossGeneration) AS sum_grid_loss,\n        SUM(RemoteLossGeneration) AS sum_remote_loss,\n        SUM(LocalLossGeneration) AS sum_local_loss,\n        SUM(WeatherLossGeneration) AS sum_weather_loss,\n        SUM(LimitLossGeneration) AS sum_limit_loss,\n        SUM(TheoreticalGeneration) AS sum_theoretical_gen\n    FROM SourceData\n),\nCalculatedMetrics AS (\n    SELECT\n        Count,\n        latest_mc006,\n        earliest_preTotalGeneration,\n        sum_theoretical_gen,\n        (latest_mc006 - earliest_preTotalGeneration) AS actual_generation_delta,\n        (sum_fault_loss + sum_overhaul_loss + sum_maintain_loss + \n         sum_grid_loss + sum_remote_loss + sum_local_loss + \n         sum_weather_loss) / 3600.0 AS total_loss_div_3600,\n        sum_fault_loss / 3600.0 / 10000.0 AS FaultLossGeneration,\n        sum_overhaul_loss / 3600.0 / 10000.0 AS OverhaulLossGeneration,\n        sum_maintain_loss / 3600.0 / 10000.0 AS MaintainLossGeneration,\n        sum_grid_loss / 3600.0 / 10000.0 AS GridLossGeneration,\n        sum_local_loss / 3600.0 / 10000.0 AS LocalLossGeneration,\n        sum_remote_loss / 3600.0 / 10000.0 AS RemoteLossGeneration,\n        sum_weather_loss / 3600.0 / 10000.0 AS WeatherLossGeneration,\n        sum_limit_loss / 3600.0 / 10000.0 AS LimitLossGeneration\n    FROM AggregatedValues\n)\nSELECT\n    Count,\n    (1.0 - (actual_generation_delta / \n            NULLIF(actual_generation_delta + total_loss_div_3600, 0))) * 100.0 AS Discrepancy,\n    (actual_generation_delta / NULLIF(sum_theoretical_gen, 0)) * 3600.0 * 100.0 AS EnergyAvailability,\n    FaultLossGeneration,\n    OverhaulLossGeneration,\n    MaintainLossGeneration,\n    GridLossGeneration,\n    LocalLossGeneration,\n    RemoteLossGeneration,\n    WeatherLossGeneration,\n    LimitLossGeneration\nFROM CalculatedMetrics;", fp)
+//	}
+//	setter := func(report *EfficiencyMetrics, devName string, rTime time.Time) {
+//		report.DeviceName = devName
+//		report.Time = rTime
+//	}
+//
+//	report, err := fetchAndPrepareReportData[EfficiencyMetrics](filePath, deviceName, chdburl, logger, buildSQL, setter)
+//	if err != nil {
+//		return fmt.Errorf("failed to fetch/prepare efficiency metrics for %s: %w", deviceName, err)
+//	}
+//	if report == nil {
+//		logger.Infof("No efficiency metrics data to insert for file %s, device %s", filePath, deviceName)
+//		return nil
+//	}
+//
+//	//payload := efficiencyMetricsToInsertPayload(*report)
+//	//if err := doCHInsert(payload, "db_report.EfficiencyMetrics", chdburl, logger); err != nil {
+//	//	return fmt.Errorf("error inserting efficiency metrics for %s: %w", deviceName, err)
+//	//}
+//
+//	if err := insertEfficiencyMetrics(*report, chdburl, logger); err != nil {
+//		return fmt.Errorf("error inserting efficiency metrics report for %s: %w", deviceName, err)
+//	}
+//
+//	logger.Debugf("Successfully inserted efficiency metrics report for %s", deviceName)
+//	return nil
+//}
 
 func insertSummaryData(data SummaryData, chdburl string, logger *logger.Logger) error {
 	query := fmt.Sprintf(`
